@@ -2,11 +2,9 @@ package db
 
 import (
 	"bytes"
-	"reflect"
 	"testing"
 
-	"github.com/prysmaticlabs/prysm/beacon-chain/types"
-	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
+	"github.com/gogo/protobuf/proto"
 )
 
 func TestInitializeState(t *testing.T) {
@@ -20,82 +18,60 @@ func TestInitializeState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get chain head: %v", err)
 	}
-	if b.SlotNumber() != 0 {
-		t.Fatalf("Expected block height to equal 1. Got %d", b.SlotNumber())
+	if b.GetSlot() != 0 {
+		t.Fatalf("Expected block height to equal 1. Got %d", b.GetSlot())
 	}
 
-	aState, err := db.GetActiveState()
+	beaconState, err := db.GetState()
 	if err != nil {
-		t.Fatalf("Failed to get active state: %v", err)
+		t.Fatalf("Failed to get state: %v", err)
 	}
-	cState, err := db.GetCrystallizedState()
+	if beaconState == nil {
+		t.Fatalf("Failed to retrieve state: %v", beaconState)
+	}
+	beaconStateEnc, err := proto.Marshal(beaconState)
 	if err != nil {
-		t.Fatalf("Failed to get crystallized state: %v", err)
-	}
-	if aState == nil || cState == nil {
-		t.Fatalf("Failed to retrieve state: %v, %v", aState, cState)
-	}
-	aStateEnc, err := aState.Marshal()
-	if err != nil {
-		t.Fatalf("Failed to encode active state: %v", err)
-	}
-	cStateEnc, err := cState.Marshal()
-	if err != nil {
-		t.Fatalf("Failed t oencode crystallized state: %v", err)
+		t.Fatalf("Failed to encode state: %v", err)
 	}
 
-	aStatePrime, err := db.GetActiveState()
+	statePrime, err := db.GetState()
 	if err != nil {
-		t.Fatalf("Failed to get active state: %v", err)
+		t.Fatalf("Failed to get state: %v", err)
 	}
-	aStatePrimeEnc, err := aStatePrime.Marshal()
+	statePrimeEnc, err := proto.Marshal(statePrime)
 	if err != nil {
-		t.Fatalf("Failed to encode active state: %v", err)
+		t.Fatalf("Failed to encode state: %v", err)
 	}
 
-	cStatePrime, err := db.GetCrystallizedState()
-	if err != nil {
-		t.Fatalf("Failed to get crystallized state: %v", err)
-	}
-	cStatePrimeEnc, err := cStatePrime.Marshal()
-	if err != nil {
-		t.Fatalf("Failed to encode crystallized state: %v", err)
-	}
-
-	if !bytes.Equal(aStateEnc, aStatePrimeEnc) {
-		t.Fatalf("Expected %#x and %#x to be equal", aStateEnc, aStatePrimeEnc)
-	}
-	if !bytes.Equal(cStateEnc, cStatePrimeEnc) {
-		t.Fatalf("Expected %#x and %#x to be equal", cStateEnc, cStatePrimeEnc)
+	if !bytes.Equal(beaconStateEnc, statePrimeEnc) {
+		t.Fatalf("Expected %#x and %#x to be equal", beaconStateEnc, statePrimeEnc)
 	}
 }
 
-func TestGetUnfinalizedBlockState(t *testing.T) {
+func TestGenesisTime(t *testing.T) {
 	db := setupDB(t)
 	defer teardownDB(t, db)
-	aState := types.NewActiveState(&pb.ActiveState{})
-	cState := types.NewCrystallizedState(&pb.CrystallizedState{})
-	if err := db.SaveUnfinalizedBlockState(aState, cState); err != nil {
-		t.Fatalf("Could not save unfinalized block state: %v", err)
+
+	time, err := db.GenesisTime()
+	if err == nil {
+		t.Fatal("expected GenesisTime to fail")
 	}
 
-	aStateHash, err := aState.Hash()
+	err = db.InitializeState(nil)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed to initialize state: %v", err)
 	}
-	cStateHash, err := cState.Hash()
+
+	time, err = db.GenesisTime()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("GenesisTime failed on second attempt: %v", err)
 	}
-	got1, got2, err := db.GetUnfinalizedBlockState(aStateHash, cStateHash)
+	time2, err := db.GenesisTime()
 	if err != nil {
-		t.Errorf("Unexpected error: wanted nil, received %v", err)
-		return
+		t.Fatalf("GenesisTime failed on second attempt: %v", err)
 	}
-	if !reflect.DeepEqual(got1, aState) {
-		t.Errorf("ActiveState not equal: got = %v, want %v", got1, aState)
-	}
-	if !reflect.DeepEqual(got2, cState) {
-		t.Errorf("CrystallizedState not equal: got = %v, want %v", got2, cState)
+
+	if time != time2 {
+		t.Fatalf("Expected %v and %v to be equal", time, time2)
 	}
 }

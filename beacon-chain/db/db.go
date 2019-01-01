@@ -1,8 +1,10 @@
 package db
 
 import (
+	"errors"
 	"os"
 	"path"
+	"time"
 
 	"github.com/boltdb/bolt"
 )
@@ -46,8 +48,11 @@ func NewDB(dirPath string) (*BeaconDB, error) {
 		return nil, err
 	}
 	datafile := path.Join(dirPath, "beaconchain.db")
-	boltDB, err := bolt.Open(datafile, 0600, nil)
+	boltDB, err := bolt.Open(datafile, 0600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
+		if err == bolt.ErrTimeout {
+			return nil, errors.New("cannot obtain database lock, database may be in use by another process")
+		}
 		return nil, err
 	}
 
@@ -55,7 +60,7 @@ func NewDB(dirPath string) (*BeaconDB, error) {
 
 	if err := db.update(func(tx *bolt.Tx) error {
 		return createBuckets(tx, blockBucket, attestationBucket, mainChainBucket,
-			chainInfoBucket, blockVoteCacheBucket, simulatorBucket)
+			chainInfoBucket, blockVoteCacheBucket, simulatorBucket, cleanupHistoryBucket)
 
 	}); err != nil {
 		return nil, err

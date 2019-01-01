@@ -1,6 +1,7 @@
 package validators
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestGetShardAndCommitteesForSlots(t *testing.T) {
-	state := &pb.CrystallizedState{
+	state := &pb.BeaconState{
 		LastStateRecalculationSlot: 64,
 		ShardAndCommitteesForSlots: []*pb.ShardAndCommitteeArray{
 			{ArrayShardAndCommittee: []*pb.ShardAndCommittee{
@@ -37,39 +38,42 @@ func TestGetShardAndCommitteesForSlots(t *testing.T) {
 	}
 }
 
-func TestExceedingMaxValidatorsFails(t *testing.T) {
+func TestExceedingMaxValidatorRegistryFails(t *testing.T) {
 	// Create more validators than ModuloBias defined in config, this should fail.
-	size := params.BeaconConfig().ModuloBias + 1
+	size := 1<<(params.BeaconConfig().RandBytes*8) - 1
+
 	validators := make([]*pb.ValidatorRecord, size)
-	validator := &pb.ValidatorRecord{WithdrawalShard: 0, Status: uint64(params.Active)}
-	for i := uint64(0); i < size; i++ {
+	validator := &pb.ValidatorRecord{Status: pb.ValidatorRecord_ACTIVE}
+	for i := 0; i < size; i++ {
 		validators[i] = validator
 	}
 
-	// ValidatorsBySlotShard should fail the same.
-	if _, err := ShuffleValidatorsToCommittees(common.Hash{'A'}, validators, 1); err == nil {
-		t.Errorf("ValidatorsBySlotShard should have failed")
+	// ValidatorRegistryBySlotShard should fail the same.
+	if _, err := ShuffleValidatorRegistryToCommittees(common.Hash{'A'}, validators, 1); err == nil {
+		t.Errorf("ValidatorRegistryBySlotShard should have failed")
 	}
 }
 
-func BenchmarkMaxValidators(b *testing.B) {
+func BenchmarkMaxValidatorRegistry(b *testing.B) {
 	var validators []*pb.ValidatorRecord
-	validator := &pb.ValidatorRecord{WithdrawalShard: 0}
-	for i := uint64(0); i < params.BeaconConfig().ModuloBias; i++ {
+	validator := &pb.ValidatorRecord{}
+	size := 1<<(params.BeaconConfig().RandBytes*8) - 1
+
+	for i := 0; i < size; i++ {
 		validators = append(validators, validator)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ShuffleValidatorsToCommittees(common.Hash{'A'}, validators, 1)
+		ShuffleValidatorRegistryToCommittees(common.Hash{'A'}, validators, 1)
 	}
 }
 
 func TestInitialShardAndCommiteeForSlots(t *testing.T) {
-	// Create 1000 validators in ActiveValidators.
+	// Create 1000 validators in ActiveValidatorRegistry.
 	var validators []*pb.ValidatorRecord
 	for i := 0; i < 1000; i++ {
-		validator := &pb.ValidatorRecord{WithdrawalShard: 0}
+		validator := &pb.ValidatorRecord{}
 		validators = append(validators, validator)
 	}
 	shardAndCommitteeArray, err := InitialShardAndCommitteesForSlots(validators)
@@ -82,15 +86,15 @@ func TestInitialShardAndCommiteeForSlots(t *testing.T) {
 	}
 
 }
-func TestShuffleActiveValidators(t *testing.T) {
-	// Create 1000 validators in ActiveValidators.
+func TestShuffleActiveValidatorRegistry(t *testing.T) {
+	// Create 1000 validators in ActiveValidatorRegistry.
 	var validators []*pb.ValidatorRecord
 	for i := 0; i < 1000; i++ {
-		validator := &pb.ValidatorRecord{WithdrawalShard: 0}
+		validator := &pb.ValidatorRecord{}
 		validators = append(validators, validator)
 	}
 
-	indices, err := ShuffleValidatorsToCommittees(common.Hash{'A'}, validators, 1)
+	indices, err := ShuffleValidatorRegistryToCommittees(common.Hash{'A'}, validators, 1)
 	if err != nil {
 		t.Errorf("validatorsBySlotShard failed with %v:", err)
 	}
@@ -99,15 +103,15 @@ func TestShuffleActiveValidators(t *testing.T) {
 	}
 }
 
-func TestSmallSampleValidators(t *testing.T) {
-	// Create a small number of validators validators in ActiveValidators.
+func TestSmallSampleValidatorRegistry(t *testing.T) {
+	// Create a small number of validators validators in ActiveValidatorRegistry.
 	var validators []*pb.ValidatorRecord
 	for i := 0; i < 20; i++ {
-		validator := &pb.ValidatorRecord{WithdrawalShard: 0}
+		validator := &pb.ValidatorRecord{}
 		validators = append(validators, validator)
 	}
 
-	indices, err := ShuffleValidatorsToCommittees(common.Hash{'A'}, validators, 1)
+	indices, err := ShuffleValidatorRegistryToCommittees(common.Hash{'A'}, validators, 1)
 	if err != nil {
 		t.Errorf("validatorsBySlotShard failed with %v:", err)
 	}
@@ -117,27 +121,27 @@ func TestSmallSampleValidators(t *testing.T) {
 }
 
 func TestGetCommitteesPerSlotSmallValidatorSet(t *testing.T) {
-	numValidators := params.BeaconConfig().CycleLength * params.BeaconConfig().TargetCommitteeSize / 4
+	numValidatorRegistry := params.BeaconConfig().CycleLength * params.BeaconConfig().TargetCommitteeSize / 4
 
-	committesPerSlot := getCommitteesPerSlot(numValidators)
+	committesPerSlot := getCommitteesPerSlot(numValidatorRegistry)
 	if committesPerSlot != 1 {
 		t.Fatalf("Expected committeesPerSlot to equal %d: got %d", 1, committesPerSlot)
 	}
 }
 
 func TestGetCommitteesPerSlotRegularValidatorSet(t *testing.T) {
-	numValidators := params.BeaconConfig().CycleLength * params.BeaconConfig().TargetCommitteeSize
+	numValidatorRegistry := params.BeaconConfig().CycleLength * params.BeaconConfig().TargetCommitteeSize
 
-	committesPerSlot := getCommitteesPerSlot(numValidators)
+	committesPerSlot := getCommitteesPerSlot(numValidatorRegistry)
 	if committesPerSlot != 1 {
 		t.Fatalf("Expected committeesPerSlot to equal %d: got %d", 1, committesPerSlot)
 	}
 }
 
 func TestGetCommitteesPerSlotLargeValidatorSet(t *testing.T) {
-	numValidators := params.BeaconConfig().CycleLength * params.BeaconConfig().TargetCommitteeSize * 8
+	numValidatorRegistry := params.BeaconConfig().CycleLength * params.BeaconConfig().TargetCommitteeSize * 8
 
-	committesPerSlot := getCommitteesPerSlot(numValidators)
+	committesPerSlot := getCommitteesPerSlot(numValidatorRegistry)
 	if committesPerSlot != 5 {
 		t.Fatalf("Expected committeesPerSlot to equal %d: got %d", 5, committesPerSlot)
 	}
@@ -148,9 +152,9 @@ func TestGetCommitteesPerSlotSmallShardCount(t *testing.T) {
 	oldShardCount := config.ShardCount
 	config.ShardCount = config.CycleLength - 1
 
-	numValidators := params.BeaconConfig().CycleLength * params.BeaconConfig().TargetCommitteeSize
+	numValidatorRegistry := params.BeaconConfig().CycleLength * params.BeaconConfig().TargetCommitteeSize
 
-	committesPerSlot := getCommitteesPerSlot(numValidators)
+	committesPerSlot := getCommitteesPerSlot(numValidatorRegistry)
 	if committesPerSlot != 1 {
 		t.Fatalf("Expected committeesPerSlot to equal %d: got %d", 1, committesPerSlot)
 	}
@@ -158,10 +162,10 @@ func TestGetCommitteesPerSlotSmallShardCount(t *testing.T) {
 	config.ShardCount = oldShardCount
 }
 
-func TestValidatorsBySlotShardRegularValidatorSet(t *testing.T) {
+func TestValidatorRegistryBySlotShardRegularValidatorSet(t *testing.T) {
 	validatorIndices := []uint32{}
-	numValidators := int(params.BeaconConfig().CycleLength * params.BeaconConfig().TargetCommitteeSize)
-	for i := 0; i < numValidators; i++ {
+	numValidatorRegistry := int(params.BeaconConfig().CycleLength * params.BeaconConfig().TargetCommitteeSize)
+	for i := 0; i < numValidatorRegistry; i++ {
 		validatorIndices = append(validatorIndices, uint32(i))
 	}
 
@@ -184,10 +188,10 @@ func TestValidatorsBySlotShardRegularValidatorSet(t *testing.T) {
 	}
 }
 
-func TestValidatorsBySlotShardLargeValidatorSet(t *testing.T) {
+func TestValidatorRegistryBySlotShardLargeValidatorSet(t *testing.T) {
 	validatorIndices := []uint32{}
-	numValidators := int(params.BeaconConfig().CycleLength*params.BeaconConfig().TargetCommitteeSize) * 2
-	for i := 0; i < numValidators; i++ {
+	numValidatorRegistry := int(params.BeaconConfig().CycleLength*params.BeaconConfig().TargetCommitteeSize) * 2
+	for i := 0; i < numValidatorRegistry; i++ {
 		validatorIndices = append(validatorIndices, uint32(i))
 	}
 
@@ -216,10 +220,10 @@ func TestValidatorsBySlotShardLargeValidatorSet(t *testing.T) {
 	}
 }
 
-func TestValidatorsBySlotShardSmallValidatorSet(t *testing.T) {
+func TestValidatorRegistryBySlotShardSmallValidatorSet(t *testing.T) {
 	validatorIndices := []uint32{}
-	numValidators := int(params.BeaconConfig().CycleLength*params.BeaconConfig().TargetCommitteeSize) / 2
-	for i := 0; i < numValidators; i++ {
+	numValidatorRegistry := int(params.BeaconConfig().CycleLength*params.BeaconConfig().TargetCommitteeSize) / 2
+	for i := 0; i < numValidatorRegistry; i++ {
 		validatorIndices = append(validatorIndices, uint32(i))
 	}
 
@@ -241,5 +245,120 @@ func TestValidatorsBySlotShardSmallValidatorSet(t *testing.T) {
 				t.Fatalf("Expected committee size %d: got %d", params.BeaconConfig().TargetCommitteeSize/2, len(shardCommittee.Committee))
 			}
 		}
+	}
+}
+
+func TestAttestationParticipants_ok(t *testing.T) {
+	if params.BeaconConfig().EpochLength != 64 {
+		t.Errorf("EpochLength should be 64 for these tests to pass")
+	}
+
+	var committeeIndices []uint32
+	for i := uint32(0); i < 8; i++ {
+		committeeIndices = append(committeeIndices, i)
+	}
+
+	var shardAndCommittees []*pb.ShardAndCommitteeArray
+	for i := uint64(0); i < params.BeaconConfig().EpochLength*2; i++ {
+		shardAndCommittees = append(shardAndCommittees, &pb.ShardAndCommitteeArray{
+			ArrayShardAndCommittee: []*pb.ShardAndCommittee{
+				{Shard: i},
+				{Committee: committeeIndices},
+			},
+		})
+	}
+
+	state := &pb.BeaconState{
+		ShardAndCommitteesAtSlots: shardAndCommittees,
+	}
+
+	attestationData := &pb.AttestationData{}
+
+	tests := []struct {
+		attestationSlot uint64
+		stateSlot       uint64
+		shard           uint64
+		bitfield        []byte
+		wanted          []uint32
+	}{
+		{
+			attestationSlot: 2,
+			stateSlot:       5,
+			shard:           0,
+			bitfield:        []byte{'A'},
+			wanted:          []uint32{1, 7},
+		},
+		{
+			attestationSlot: 1,
+			stateSlot:       10,
+			shard:           0,
+			bitfield:        []byte{1},
+			wanted:          []uint32{7},
+		},
+		{
+			attestationSlot: 10,
+			stateSlot:       20,
+			shard:           0,
+			bitfield:        []byte{2},
+			wanted:          []uint32{6},
+		},
+		{
+			attestationSlot: 64,
+			stateSlot:       100,
+			shard:           0,
+			bitfield:        []byte{3},
+			wanted:          []uint32{6, 7},
+		},
+		{
+			attestationSlot: 999,
+			stateSlot:       1000,
+			shard:           0,
+			bitfield:        []byte{'F'},
+			wanted:          []uint32{1, 5, 6},
+		},
+	}
+
+	for _, tt := range tests {
+		state.Slot = tt.stateSlot
+		attestationData.Slot = tt.attestationSlot
+		attestationData.Shard = tt.shard
+
+		result, err := AttestationParticipants(state, attestationData, tt.bitfield)
+		if err != nil {
+			t.Errorf("Failed to get attestation participants: %v", err)
+		}
+
+		if !reflect.DeepEqual(tt.wanted, result) {
+			t.Errorf(
+				"Result indices was an unexpected value. Wanted %d, got %d",
+				tt.wanted,
+				result,
+			)
+		}
+	}
+}
+
+func TestAttestationParticipants_IncorrectBitfield(t *testing.T) {
+	if params.BeaconConfig().EpochLength != 64 {
+		t.Errorf("EpochLength should be 64 for these tests to pass")
+	}
+
+	var shardAndCommittees []*pb.ShardAndCommitteeArray
+	for i := uint64(0); i < params.BeaconConfig().EpochLength*2; i++ {
+		shardAndCommittees = append(shardAndCommittees, &pb.ShardAndCommitteeArray{
+			ArrayShardAndCommittee: []*pb.ShardAndCommittee{
+				{Shard: i},
+			},
+		})
+	}
+
+	state := &pb.BeaconState{
+		ShardAndCommitteesAtSlots: shardAndCommittees,
+	}
+
+	attestationData := &pb.AttestationData{}
+
+	if _, err := AttestationParticipants(state, attestationData, []byte{1}); err == nil {
+		t.Error("attestation participants should have failed with incorrect bitfield")
 	}
 }

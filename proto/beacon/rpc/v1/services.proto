@@ -12,7 +12,7 @@ service BeaconService {
     rpc CanonicalHead(google.protobuf.Empty) returns (ethereum.beacon.p2p.v1.BeaconBlock);
     // LatestAttestation streams the latest aggregated attestation to connected
     // validator clients.
-    rpc LatestAttestation(google.protobuf.Empty) returns (stream ethereum.beacon.p2p.v1.AggregatedAttestation);
+    rpc LatestAttestation(google.protobuf.Empty) returns (stream ethereum.beacon.p2p.v1.Attestation);
     // CurrentAssignmentsAndGenesisTime is called by a validator client upon first connecting
     // to a beacon node in order to determine the current validator assignments
     // and genesis timestamp of the protocol.
@@ -41,7 +41,7 @@ service ValidatorService {
 message ProposeRequest {
     bytes parent_hash = 1;
     uint64 slot_number = 2;
-    bytes randao_reveal = 3;
+    bytes randao_reveal_hash32 = 3;
     bytes attestation_bitmask = 4;
     repeated uint32 attestation_aggregate_sig = 5;
     google.protobuf.Timestamp timestamp = 6;
@@ -52,7 +52,7 @@ message ProposeResponse {
 }
 
 message AttestRequest {
-    ethereum.beacon.p2p.v1.AggregatedAttestation attestation = 1;
+    ethereum.beacon.p2p.v1.Attestation attestation = 1;
 }
 
 message AttestResponse {

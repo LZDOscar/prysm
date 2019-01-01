@@ -1,48 +1,86 @@
-pragma solidity 0.4.23;
+pragma solidity ^0.5.1;
+
 
 contract ValidatorRegistration {
-    event ValidatorRegistered(
-        bytes32 indexed hashedPubkey,
-        uint256 withdrawalShardID,
-        address indexed withdrawalAddressbytes32,
-        bytes32 indexed randaoCommitment
+
+    event HashChainValue(
+        bytes indexed previousReceiptRoot,
+        bytes data,
+        uint totalDepositcount
     );
 
-    mapping (bytes32 => bool) public usedHashedPubkey;
+    event ChainStart(
+        bytes indexed receiptRoot,
+        bytes time
+    );
 
-    uint public constant VALIDATOR_DEPOSIT = 32 ether;
+    uint public constant DEPOSIT_SIZE = 32 ether;
+    // 8 is for our local test net. 2.0 spec is 2**14 == 16384 
+    uint public constant DEPOSITS_FOR_CHAIN_START = 8; // 2**14
+    uint public constant MIN_TOPUP_SIZE = 1 ether;
+    uint public constant GWEI_PER_ETH = 10 ** 9;
+    // Setting MERKLE_TREE_DEPTH to 16 instead of 32 due to gas limit
+    uint public constant MERKLE_TREE_DEPTH = 16;
+    uint public constant SECONDS_PER_DAY = 86400;
 
-    // Validator registers by sending a transaction of 32ETH to
-    // the following deposit function. The deposit function takes in
-    // validator's public key, withdrawal shard ID (which shard
-    // to send the deposit back to), withdrawal address (which address
-    // to send the deposit back to) and randao commitment.
+    mapping (uint => bytes) public receiptTree;
+    uint public fullDepositCount;
+    uint public totalDepositCount;
+
+    // When users wish to become a validator by moving ETH from
+    // 1.0 chian to the 2.0 chain, they should call this function
+    // sending along DEPOSIT_SIZE ETH and providing depositParams
+    // as a simple serialize'd DepositParams object of the following
+    // form: 
+    // {
+    //    'pubkey': 'uint384',
+    //    'proof_of_possession': ['uint384'],
+    //    'withdrawal_credentials`: 'hash32',
+    //    'randao_commitment`: 'hash32'
+    // }
     function deposit(
-        bytes _pubkey,
-        uint _withdrawalShardID,
-        address _withdrawalAddressbytes32,
-        bytes32 _randaoCommitment
+        bytes memory depositParams
     )
         public
         payable
     {
         require(
-            msg.value == VALIDATOR_DEPOSIT,
-            "Incorrect validator deposit"
+            msg.value <= DEPOSIT_SIZE,
+            "Deposit can't be greater than DEPOSIT_SIZE."
         );
         require(
-            _pubkey.length == 48,
-            "Public key is not 48 bytes"
+            msg.value >= MIN_TOPUP_SIZE,
+            "Deposit can't be lesser than MIN_TOPUP_SIZE."
         );
 
-        bytes32 hashedPubkey = keccak256(abi.encodePacked(_pubkey));
-        require(
-            !usedHashedPubkey[hashedPubkey],
-            "Public key already used"
-        );
+        uint index = totalDepositCount + 2 ** MERKLE_TREE_DEPTH;
+        bytes memory msgGweiInBytes8 = abi.encodePacked(uint64(msg.value/GWEI_PER_ETH));
+        bytes memory timeStampInBytes8 = abi.encodePacked(uint64(block.timestamp));
+        bytes memory depositData = abi.encodePacked(msgGweiInBytes8, timeStampInBytes8, depositParams);
 
-        usedHashedPubkey[hashedPubkey] = true;
+        emit HashChainValue(receiptTree[1], depositData, totalDepositCount);
 
-        emit ValidatorRegistered(hashedPubkey, _withdrawalShardID, _withdrawalAddressbytes32, _randaoCommitment);
+        receiptTree[index] = abi.encodePacked(keccak256(depositData));
+        for (uint i = 0; i < MERKLE_TREE_DEPTH; i++) {
+            index = index / 2;
+            receiptTree[index] = abi.encodePacked(keccak256(abi.encodePacked(receiptTree[index * 2], receiptTree[index * 2 + 1])));
+        }
+        
+        totalDepositCount++;
+        if (msg.value == DEPOSIT_SIZE) {
+            fullDepositCount++;
+
+            // When ChainStart log publishes, beacon chain node initializes the chain and use timestampDayBoundry
+            // as genesis time.
+            if (fullDepositCount == DEPOSITS_FOR_CHAIN_START) {
+                uint timestampDayBoundry = block.timestamp - block.timestamp % SECONDS_PER_DAY + SECONDS_PER_DAY;
+                bytes memory timestampDayBoundryBytes = abi.encodePacked(uint64(timestampDayBoundry));
+                emit ChainStart(receiptTree[1], timestampDayBoundryBytes);
+            }
+        }
+    }
+
+    function getReceiptRoot() public view returns (bytes memory) {
+        return receiptTree[1];
     }
 }

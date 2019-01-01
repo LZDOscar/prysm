@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/golang/protobuf/proto"
+	"github.com/gogo/protobuf/proto"
 	"github.com/prysmaticlabs/prysm/beacon-chain/db"
 	"github.com/prysmaticlabs/prysm/beacon-chain/internal"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
 	"github.com/prysmaticlabs/prysm/shared/event"
+	"github.com/prysmaticlabs/prysm/shared/hashutil"
 	"github.com/prysmaticlabs/prysm/shared/p2p"
 	"github.com/prysmaticlabs/prysm/shared/testutil"
 	"github.com/sirupsen/logrus"
@@ -44,7 +45,6 @@ func (mpow *mockPOWChainService) LatestBlockHash() common.Hash {
 
 func setupSimulator(t *testing.T, beaconDB *db.BeaconDB) (*Simulator, *mockP2P) {
 	ctx := context.Background()
-
 	p2pService := &mockP2P{}
 
 	err := beaconDB.InitializeState(nil)
@@ -58,7 +58,6 @@ func setupSimulator(t *testing.T, beaconDB *db.BeaconDB) (*Simulator, *mockP2P) 
 		Web3Service:     &mockPOWChainService{},
 		BeaconDB:        beaconDB,
 		EnablePOWChain:  true,
-		CStateReqBuf:    10,
 	}
 
 	return NewSimulator(ctx, cfg), p2pService
@@ -187,7 +186,7 @@ func TestBlockRequestBySlot(t *testing.T) {
 	hook.Reset()
 }
 
-func TestCrystallizedStateRequest(t *testing.T) {
+func TestStateRequest(t *testing.T) {
 	hook := logTest.NewGlobal()
 
 	db := internal.SetupDB(t)
@@ -202,43 +201,34 @@ func TestCrystallizedStateRequest(t *testing.T) {
 		<-exitRoutine
 	}()
 
-	cState, err := sim.beaconDB.GetCrystallizedState()
+	beaconState, err := sim.beaconDB.GetState()
 	if err != nil {
-		t.Fatalf("could not retrieve crystallized state %v", err)
+		t.Fatalf("could not retrieve beacon state %v", err)
 	}
 
-	hash, err := cState.Hash()
+	enc, err := proto.Marshal(beaconState)
 	if err != nil {
-		t.Fatalf("could not hash crystallized state %v", err)
+		t.Fatalf("could not marshal beacon state %v", err)
+	}
+	hash := hashutil.Hash(enc)
+
+	sim.stateReqChan <- p2p.Message{
+		Data: &pb.BeaconStateRequest{
+			Hash: []byte{'t', 'e', 's', 't'},
+		},
 	}
 
-	cStateRequest := &pb.CrystallizedStateRequest{
-		Hash: []byte{'t', 'e', 's', 't'},
-	}
-
-	message := p2p.Message{
-		Data: cStateRequest,
-	}
-
-	sim.cStateReqChan <- message
-
-	testutil.WaitForLog(t, hook, "Requested Crystallized state is of a different hash")
-	testutil.AssertLogsDoNotContain(t, hook, "Responding to full crystallized state request")
+	testutil.WaitForLog(t, hook, "Requested beacon state is of a different hash")
 
 	hook.Reset()
 
-	newCStateReq := &pb.CrystallizedStateRequest{
-		Hash: hash[:],
+	sim.stateReqChan <- p2p.Message{
+		Data: &pb.BeaconStateRequest{
+			Hash: hash[:],
+		},
 	}
 
-	newMessage := p2p.Message{
-		Data: newCStateReq,
-	}
-
-	sim.cStateReqChan <- newMessage
-
-	testutil.WaitForLog(t, hook, "Responding to full crystallized state request")
-	testutil.AssertLogsDoNotContain(t, hook, "Requested Crystallized state is of a different hash")
+	testutil.WaitForLog(t, hook, "Responding to full beacon state request")
 
 	sim.cancel()
 	exitRoutine <- true

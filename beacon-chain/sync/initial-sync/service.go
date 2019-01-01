@@ -16,8 +16,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/golang/protobuf/proto"
-	"github.com/prysmaticlabs/prysm/beacon-chain/types"
+	"github.com/prysmaticlabs/prysm/beacon-chain/core/state"
+
+	"github.com/gogo/protobuf/proto"
+	b "github.com/prysmaticlabs/prysm/beacon-chain/core/blocks"
+	"github.com/prysmaticlabs/prysm/beacon-chain/db"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
 	"github.com/prysmaticlabs/prysm/shared/event"
 	"github.com/prysmaticlabs/prysm/shared/p2p"
@@ -30,26 +33,28 @@ var log = logrus.WithField("prefix", "initial-sync")
 // Config defines the configurable properties of InitialSync.
 //
 type Config struct {
-	SyncPollingInterval         time.Duration
-	BlockBufferSize             int
-	BlockAnnounceBufferSize     int
-	CrystallizedStateBufferSize int
-	BeaconDB                    beaconDB
-	P2P                         p2pAPI
-	SyncService                 syncService
-	QueryService                queryService
+	SyncPollingInterval     time.Duration
+	BlockBufferSize         int
+	BlockAnnounceBufferSize int
+	BatchedBlockBufferSize  int
+	StateBufferSize         int
+	BeaconDB                *db.BeaconDB
+	P2P                     p2pAPI
+	SyncService             syncService
+	ChainService            chainService
 }
 
 // DefaultConfig provides the default configuration for a sync service.
 // SyncPollingInterval determines how frequently the service checks that initial sync is complete.
 // BlockBufferSize determines that buffer size of the `blockBuf` channel.
 // CrystallizedStateBufferSize determines the buffer size of thhe `crystallizedStateBuf` channel.
-func DefaultConfig() Config {
-	return Config{
-		SyncPollingInterval:         time.Duration(params.BeaconConfig().SyncPollingInterval) * time.Second,
-		BlockBufferSize:             100,
-		BlockAnnounceBufferSize:     100,
-		CrystallizedStateBufferSize: 100,
+func DefaultConfig() *Config {
+	return &Config{
+		SyncPollingInterval:     time.Duration(params.BeaconConfig().SyncPollingInterval) * time.Second,
+		BlockBufferSize:         100,
+		BatchedBlockBufferSize:  100,
+		BlockAnnounceBufferSize: 100,
+		StateBufferSize:         100,
 	}
 }
 
@@ -59,9 +64,8 @@ type p2pAPI interface {
 	Broadcast(msg proto.Message)
 }
 
-type beaconDB interface {
-	SaveBlock(*types.Block) error
-	SaveCrystallizedState(*types.CrystallizedState) error
+type chainService interface {
+	IncomingBlockFeed() *event.Feed
 }
 
 // SyncService is the interface for the Sync service.
@@ -69,78 +73,66 @@ type beaconDB interface {
 type syncService interface {
 	Start()
 	ResumeSync()
-	IsSyncedWithNetwork() bool
-}
-
-type queryService interface {
-	IsSynced() (bool, error)
 }
 
 // InitialSync defines the main class in this package.
 // See the package comments for a general description of the service's functions.
 type InitialSync struct {
-	ctx                          context.Context
-	cancel                       context.CancelFunc
-	p2p                          p2pAPI
-	syncService                  syncService
-	queryService                 queryService
-	db                           beaconDB
-	blockAnnounceBuf             chan p2p.Message
-	blockBuf                     chan p2p.Message
-	crystallizedStateBuf         chan p2p.Message
-	currentSlot                  uint64
-	highestObservedSlot          uint64
-	syncPollingInterval          time.Duration
-	initialCrystallizedStateRoot [32]byte
-	inMemoryBlocks               map[uint64]*pb.BeaconBlockResponse
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	p2p                    p2pAPI
+	syncService            syncService
+	chainService           chainService
+	db                     *db.BeaconDB
+	blockAnnounceBuf       chan p2p.Message
+	batchedBlockBuf        chan p2p.Message
+	blockBuf               chan p2p.Message
+	stateBuf               chan p2p.Message
+	currentSlot            uint64
+	highestObservedSlot    uint64
+	syncPollingInterval    time.Duration
+	initialStateRootHash32 [32]byte
+	inMemoryBlocks         map[uint64]*pb.BeaconBlock
 }
 
 // NewInitialSyncService constructs a new InitialSyncService.
 // This method is normally called by the main node.
 func NewInitialSyncService(ctx context.Context,
-	cfg Config,
+	cfg *Config,
 ) *InitialSync {
 	ctx, cancel := context.WithCancel(ctx)
 
 	blockBuf := make(chan p2p.Message, cfg.BlockBufferSize)
-	crystallizedStateBuf := make(chan p2p.Message, cfg.CrystallizedStateBufferSize)
+	stateBuf := make(chan p2p.Message, cfg.StateBufferSize)
 	blockAnnounceBuf := make(chan p2p.Message, cfg.BlockAnnounceBufferSize)
+	batchedBlockBuf := make(chan p2p.Message, cfg.BatchedBlockBufferSize)
 
 	return &InitialSync{
-		ctx:                  ctx,
-		cancel:               cancel,
-		p2p:                  cfg.P2P,
-		syncService:          cfg.SyncService,
-		db:                   cfg.BeaconDB,
-		currentSlot:          0,
-		highestObservedSlot:  0,
-		blockBuf:             blockBuf,
-		crystallizedStateBuf: crystallizedStateBuf,
-		blockAnnounceBuf:     blockAnnounceBuf,
-		syncPollingInterval:  cfg.SyncPollingInterval,
-		inMemoryBlocks:       map[uint64]*pb.BeaconBlockResponse{},
-		queryService:         cfg.QueryService,
+		ctx:                 ctx,
+		cancel:              cancel,
+		p2p:                 cfg.P2P,
+		syncService:         cfg.SyncService,
+		chainService:        cfg.ChainService,
+		db:                  cfg.BeaconDB,
+		currentSlot:         0,
+		highestObservedSlot: 0,
+		blockBuf:            blockBuf,
+		stateBuf:            stateBuf,
+		batchedBlockBuf:     batchedBlockBuf,
+		blockAnnounceBuf:    blockAnnounceBuf,
+		syncPollingInterval: cfg.SyncPollingInterval,
+		inMemoryBlocks:      map[uint64]*pb.BeaconBlock{},
 	}
 }
 
 // Start begins the goroutine.
 func (s *InitialSync) Start() {
-	synced, err := s.queryService.IsSynced()
-	if err != nil {
-		log.Error(err)
-	}
-
-	if synced {
-		// TODO(#661): Bail out of the sync service if the chain is only partially synced.
-		log.Info("Chain fully synced, exiting initial sync")
-		return
-	}
-
 	go func() {
 		ticker := time.NewTicker(s.syncPollingInterval)
 		s.run(ticker.C)
 		ticker.Stop()
 	}()
+	go s.checkInMemoryBlocks()
 }
 
 // Stop kills the initial sync goroutine.
@@ -153,17 +145,20 @@ func (s *InitialSync) Stop() error {
 // run is the main goroutine for the initial sync service.
 // delayChan is explicitly passed into this function to facilitate tests that don't require a timeout.
 // It is assumed that the goroutine `run` is only called once per instance.
-func (s *InitialSync) run(delaychan <-chan time.Time) {
+func (s *InitialSync) run(delayChan <-chan time.Time) {
 
 	blockSub := s.p2p.Subscribe(&pb.BeaconBlockResponse{}, s.blockBuf)
+	batchedBlocksub := s.p2p.Subscribe(&pb.BatchedBeaconBlockResponse{}, s.batchedBlockBuf)
 	blockAnnounceSub := s.p2p.Subscribe(&pb.BeaconBlockAnnounce{}, s.blockAnnounceBuf)
-	crystallizedStateSub := s.p2p.Subscribe(&pb.CrystallizedStateResponse{}, s.crystallizedStateBuf)
+	beaconStateSub := s.p2p.Subscribe(&pb.BeaconStateResponse{}, s.stateBuf)
 	defer func() {
 		blockSub.Unsubscribe()
 		blockAnnounceSub.Unsubscribe()
-		crystallizedStateSub.Unsubscribe()
+		beaconStateSub.Unsubscribe()
+		batchedBlocksub.Unsubscribe()
+		close(s.batchedBlockBuf)
 		close(s.blockBuf)
-		close(s.crystallizedStateBuf)
+		close(s.stateBuf)
 	}()
 
 	for {
@@ -171,14 +166,13 @@ func (s *InitialSync) run(delaychan <-chan time.Time) {
 		case <-s.ctx.Done():
 			log.Debug("Exiting goroutine")
 			return
-		case <-delaychan:
+		case <-delayChan:
 			if s.currentSlot == 0 {
 				continue
 			}
 			if s.highestObservedSlot == s.currentSlot {
 				log.Info("Exiting initial sync and starting normal sync")
 				s.syncService.ResumeSync()
-				// TODO(#661): Resume sync after completion of initial sync.
 				return
 			}
 
@@ -195,142 +189,202 @@ func (s *InitialSync) run(delaychan <-chan time.Time) {
 			log.Debugf("Successfully requested the next block with slot: %d", data.GetSlotNumber())
 		case msg := <-s.blockBuf:
 			data := msg.Data.(*pb.BeaconBlockResponse)
+			s.processBlock(data.GetBlock(), msg.Peer)
+		case msg := <-s.stateBuf:
+			data := msg.Data.(*pb.BeaconStateResponse)
 
-			if data.Block.GetSlot() > s.highestObservedSlot {
-				s.highestObservedSlot = data.Block.GetSlot()
-			}
-
-			if s.currentSlot == 0 {
-				if s.initialCrystallizedStateRoot != [32]byte{} {
-					continue
-				}
-				if data.GetBlock().GetSlot() != 1 {
-
-					// saves block in memory if it isn't the initial block.
-					if _, ok := s.inMemoryBlocks[data.Block.GetSlot()]; !ok {
-						s.inMemoryBlocks[data.Block.GetSlot()] = data
-					}
-					s.requestNextBlockBySlot(1)
-					continue
-				}
-				if err := s.setBlockForInitialSync(data); err != nil {
-					log.Errorf("Could not set block for initial sync: %v", err)
-				}
-				if err := s.requestCrystallizedStateFromPeer(data, msg.Peer); err != nil {
-					log.Errorf("Could not request crystallized state from peer: %v", err)
-				}
-
-				continue
-			}
-			// if it isn't the block in the next slot it saves it in memory.
-			if data.Block.GetSlot() != (s.currentSlot + 1) {
-				if _, ok := s.inMemoryBlocks[data.Block.GetSlot()]; !ok {
-					s.inMemoryBlocks[data.Block.GetSlot()] = data
-				}
+			if s.initialStateRootHash32 == [32]byte{} {
 				continue
 			}
 
-			if err := s.validateAndSaveNextBlock(data); err != nil {
-				log.Errorf("Unable to save block: %v", err)
-			}
-			s.requestNextBlockBySlot(s.currentSlot + 1)
-		case msg := <-s.crystallizedStateBuf:
-			data := msg.Data.(*pb.CrystallizedStateResponse)
+			beaconState := data.BeaconState
 
-			if s.initialCrystallizedStateRoot == [32]byte{} {
-				continue
-			}
-
-			cState := types.NewCrystallizedState(data.CrystallizedState)
-			hash, err := cState.Hash()
+			h, err := state.Hash(beaconState)
 			if err != nil {
-				log.Errorf("Unable to hash crytsallized state: %v", err)
-			}
-
-			if hash != s.initialCrystallizedStateRoot {
+				log.Error(err)
 				continue
 			}
 
-			if err := s.db.SaveCrystallizedState(cState); err != nil {
-				log.Errorf("Unable to set crystallized state for initial sync %v", err)
+			if h != s.initialStateRootHash32 {
+				continue
 			}
 
-			log.Debug("Successfully saved crystallized state to the db")
+			if err := s.db.SaveState(beaconState); err != nil {
+				log.Errorf("Unable to set beacon state for initial sync %v", err)
+			}
 
-			if s.currentSlot >= cState.LastFinalizedSlot() {
+			log.Debug("Successfully saved beacon state to the db")
+
+			if s.currentSlot >= beaconState.GetFinalizedSlot() {
 				continue
 			}
 
 			// sets the current slot to the last finalized slot of the
 			// crystallized state to begin our sync from.
-			s.currentSlot = cState.LastFinalizedSlot()
-			log.Debugf("Successfully saved crystallized state with the last finalized slot: %d", cState.LastFinalizedSlot())
+			s.currentSlot = beaconState.GetFinalizedSlot()
+			log.Debugf("Successfully saved crystallized state with the last finalized slot: %d", beaconState.GetFinalizedSlot())
 
 			s.requestNextBlockBySlot(s.currentSlot + 1)
-			crystallizedStateSub.Unsubscribe()
+			beaconStateSub.Unsubscribe()
+
+		case msg := <-s.batchedBlockBuf:
+			s.processBatchedBlocks(msg)
 		}
 	}
 }
 
-// requestCrystallizedStateFromPeer sends a request to a peer for the corresponding crystallized state
+// checkInMemoryBlocks is another routine which will run concurrently with the
+// main routine for initial sync, where it checks the blocks saved in memory regularly
+// to see if the blocks are valid enough to be processed.
+func (s *InitialSync) checkInMemoryBlocks() {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+			if s.currentSlot == s.highestObservedSlot {
+				return
+			}
+
+			if block, ok := s.inMemoryBlocks[0]; ok && s.currentSlot == 0 {
+				s.processBlock(block, p2p.Peer{})
+			}
+
+			if block, ok := s.inMemoryBlocks[s.currentSlot+1]; ok && s.currentSlot+1 <= s.highestObservedSlot {
+				s.processBlock(block, p2p.Peer{})
+			}
+		}
+	}
+}
+
+// processBlock is the main method that validates each block which is received
+// for initial sync. It checks if the blocks are valid and then will continue to
+// process and save it into the db.
+func (s *InitialSync) processBlock(block *pb.BeaconBlock, peer p2p.Peer) {
+	if block.GetSlot() > s.highestObservedSlot {
+		s.highestObservedSlot = block.GetSlot()
+	}
+
+	if block.GetSlot() < s.currentSlot {
+		return
+	}
+
+	// setting first block for sync.
+	if s.currentSlot == 0 {
+		if s.initialStateRootHash32 != [32]byte{} {
+			log.Errorf("State root hash %#x set despite current slot being 0", s.initialStateRootHash32)
+			return
+		}
+
+		if block.GetSlot() != 1 {
+
+			// saves block in memory if it isn't the initial block.
+			if _, ok := s.inMemoryBlocks[block.GetSlot()]; !ok {
+				s.inMemoryBlocks[block.GetSlot()] = block
+			}
+			s.requestNextBlockBySlot(1)
+			return
+		}
+
+		if err := s.setBlockForInitialSync(block); err != nil {
+			log.Errorf("Could not set block for initial sync: %v", err)
+		}
+		if err := s.requestStateFromPeer(block, peer); err != nil {
+			log.Errorf("Could not request beacon state from peer: %v", err)
+		}
+
+		return
+	}
+	// if it isn't the block in the next slot it saves it in memory.
+	if block.GetSlot() != (s.currentSlot + 1) {
+		if _, ok := s.inMemoryBlocks[block.GetSlot()]; !ok {
+			s.inMemoryBlocks[block.GetSlot()] = block
+		}
+		return
+	}
+
+	if err := s.validateAndSaveNextBlock(block); err != nil {
+		log.Errorf("Unable to save block: %v", err)
+	}
+	s.requestNextBlockBySlot(s.currentSlot + 1)
+
+}
+
+// processBatchedBlocks processes all the received blocks from
+// the p2p message.
+func (s *InitialSync) processBatchedBlocks(msg p2p.Message) {
+	log.Debug("Processing batched block response")
+
+	response := msg.Data.(*pb.BatchedBeaconBlockResponse)
+	batchedBlocks := response.GetBatchedBlocks()
+
+	for _, block := range batchedBlocks {
+		s.processBlock(block, msg.Peer)
+	}
+	log.Debug("Finished processing batched blocks")
+}
+
+// requestStateFromPeer sends a request to a peer for the corresponding state
 // for a beacon block.
-func (s *InitialSync) requestCrystallizedStateFromPeer(data *pb.BeaconBlockResponse, peer p2p.Peer) error {
-	block := types.NewBlock(data.Block)
-	h := block.CrystallizedStateRoot()
-	log.Debugf("Successfully processed incoming block with crystallized state hash: %#x", h)
-	s.p2p.Send(&pb.CrystallizedStateRequest{Hash: h[:]}, peer)
+func (s *InitialSync) requestStateFromPeer(block *pb.BeaconBlock, peer p2p.Peer) error {
+	h := block.GetParentRootHash32()
+	log.Debugf("Successfully processed incoming block with state hash: %#x", h)
+	s.p2p.Send(&pb.BeaconStateRequest{Hash: h[:]}, peer)
 	return nil
 }
 
 // setBlockForInitialSync sets the first received block as the base finalized
 // block for initial sync.
-func (s *InitialSync) setBlockForInitialSync(data *pb.BeaconBlockResponse) error {
-	block := types.NewBlock(data.Block)
-
-	h, err := block.Hash()
+func (s *InitialSync) setBlockForInitialSync(block *pb.BeaconBlock) error {
+	h, err := b.Hash(block)
 	if err != nil {
 		return err
 	}
-	log.WithField("blockhash", fmt.Sprintf("%#x", h)).Debug("Crystallized state hash exists locally")
+	log.WithField("blockhash", fmt.Sprintf("%#x", h)).Debug("Beacon state hash exists locally")
 
-	if err := s.writeBlockToDB(block); err != nil {
-		return err
-	}
+	s.chainService.IncomingBlockFeed().Send(block)
 
-	s.initialCrystallizedStateRoot = block.CrystallizedStateRoot()
+	var blockStateRoot [32]byte
+	copy(blockStateRoot[:], block.GetStateRootHash32())
+	s.initialStateRootHash32 = blockStateRoot
 
 	log.Infof("Saved block with hash %#x for initial sync", h)
-	s.currentSlot = block.SlotNumber()
+	s.currentSlot = block.GetSlot()
 	s.requestNextBlockBySlot(s.currentSlot + 1)
 	return nil
 }
 
 // requestNextBlock broadcasts a request for a block with the entered slotnumber.
-func (s *InitialSync) requestNextBlockBySlot(slotnumber uint64) {
-	log.Debugf("Requesting block %d ", slotnumber)
-	if _, ok := s.inMemoryBlocks[slotnumber]; ok {
-		s.blockBuf <- p2p.Message{
-			Data: s.inMemoryBlocks[slotnumber],
-		}
+func (s *InitialSync) requestNextBlockBySlot(slotNumber uint64) {
+	log.Debugf("Requesting block %d ", slotNumber)
+	if block, ok := s.inMemoryBlocks[slotNumber]; ok {
+		s.processBlock(block, p2p.Peer{})
 		return
 	}
-	s.p2p.Broadcast(&pb.BeaconBlockRequestBySlotNumber{SlotNumber: slotnumber})
+	s.p2p.Broadcast(&pb.BeaconBlockRequestBySlotNumber{SlotNumber: slotNumber})
 }
 
-// requestBatchedBlocks sends out multiple requests for blocks till a
+func (s *InitialSync) requestBlockByHash(hash [32]byte, peer p2p.Peer) {
+	s.p2p.Send(&pb.BeaconBlockRequest{
+		Hash: hash[:],
+	}, peer)
+}
+
+// requestBatchedBlocks sends out a request for multiple blocks till a
 // specified bound slot number.
 func (s *InitialSync) requestBatchedBlocks(endSlot uint64) {
-	log.Debug("Requesting batched blocks")
-	for i := s.currentSlot + 1; i <= endSlot; i++ {
-		s.requestNextBlockBySlot(i)
-	}
+	log.Debugf("Requesting batched blocks from slot %d to %d", s.currentSlot+1, endSlot)
+	s.p2p.Broadcast(&pb.BatchedBeaconBlockRequest{
+		StartSlot: s.currentSlot + 1,
+		EndSlot:   endSlot,
+	})
 }
 
 // validateAndSaveNextBlock will validate whether blocks received from the blockfetcher
 // routine can be added to the chain.
-func (s *InitialSync) validateAndSaveNextBlock(data *pb.BeaconBlockResponse) error {
-	block := types.NewBlock(data.Block)
-	h, err := block.Hash()
+func (s *InitialSync) validateAndSaveNextBlock(block *pb.BeaconBlock) error {
+
+	h, err := b.Hash(block)
 	if err != nil {
 		return err
 	}
@@ -339,24 +393,57 @@ func (s *InitialSync) validateAndSaveNextBlock(data *pb.BeaconBlockResponse) err
 		return errors.New("invalid slot number for syncing")
 	}
 
-	if (s.currentSlot + 1) == block.SlotNumber() {
+	if (s.currentSlot + 1) == block.GetSlot() {
 
-		if err := s.writeBlockToDB(block); err != nil {
+		if err := s.checkBlockValidity(block); err != nil {
 			return err
 		}
 
-		log.Infof("Saved block with hash %#x and slot %d for initial sync", h, block.SlotNumber())
-		s.currentSlot = block.SlotNumber()
+		log.Infof("Saved block with hash %#x and slot %d for initial sync", h, block.GetSlot())
+		s.currentSlot = block.GetSlot()
 
 		// delete block from memory
-		if _, ok := s.inMemoryBlocks[block.SlotNumber()]; ok {
-			delete(s.inMemoryBlocks, block.SlotNumber())
+		if _, ok := s.inMemoryBlocks[block.GetSlot()]; ok {
+			delete(s.inMemoryBlocks, block.GetSlot())
 		}
+
+		// Send block to main chain service to be processed
+		s.chainService.IncomingBlockFeed().Send(block)
 	}
 	return nil
 }
 
-// writeBlockToDB saves the corresponding block to the local DB.
-func (s *InitialSync) writeBlockToDB(block *types.Block) error {
+func (s *InitialSync) checkBlockValidity(block *pb.BeaconBlock) error {
+
+	blockHash, err := b.Hash(block)
+	if err != nil {
+		return fmt.Errorf("could not hash received block: %v", err)
+	}
+
+	log.Debugf("Processing response to block request: %#x", blockHash)
+
+	if s.db.HasBlock(blockHash) {
+		return errors.New("received a block that already exists. Exiting")
+	}
+
+	beaconState, err := s.db.GetState()
+	if err != nil {
+		return fmt.Errorf("failed to get beacon state: %v", err)
+	}
+
+	if block.GetSlot() < beaconState.GetFinalizedSlot() {
+		return errors.New("discarding received block with a slot number smaller than the last finalized slot")
+	}
+	// Attestation from proposer not verified as, other nodes only store blocks not proposer
+	// attestations.
+
+	return nil
+}
+
+func (s *InitialSync) writeBlockToDB(block *pb.BeaconBlock) error {
 	return s.db.SaveBlock(block)
+}
+
+func (s *InitialSync) checkForGenesisBlock(hash [32]byte) bool {
+	return s.db.HasBlock(hash)
 }

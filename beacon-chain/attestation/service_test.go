@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/prysmaticlabs/prysm/beacon-chain/internal"
-	"github.com/prysmaticlabs/prysm/beacon-chain/types"
+	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
 	"github.com/prysmaticlabs/prysm/shared/testutil"
 	"github.com/sirupsen/logrus"
 	logTest "github.com/sirupsen/logrus/hooks/test"
@@ -27,7 +27,7 @@ func TestIncomingAttestations(t *testing.T) {
 		<-exitRoutine
 	}()
 
-	service.incomingChan <- types.NewAttestation(nil)
+	service.incomingChan <- &pb.Attestation{}
 	service.cancel()
 	exitRoutine <- true
 

@@ -7,8 +7,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/golang/protobuf/ptypes"
-	"github.com/golang/protobuf/ptypes/empty"
+	ptypes "github.com/gogo/protobuf/types"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/rpc/v1"
 	"github.com/prysmaticlabs/prysm/shared/event"
 	"github.com/prysmaticlabs/prysm/shared/params"
@@ -93,6 +92,13 @@ func (s *Service) Stop() error {
 	return nil
 }
 
+// Status always returns nil.
+// This service will be rewritten in the future so this service check is a
+// no-op for now.
+func (s *Service) Status() error {
+	return nil
+}
+
 // fetchCurrentAssignmentsAndGenesisTime fetches both the genesis timestamp as well
 // as the current assignments for the current cycle in the beacon node. This allows
 // the validator to do the following:
@@ -120,11 +126,10 @@ func (s *Service) fetchCurrentAssignmentsAndGenesisTime(client pb.BeaconServiceC
 
 	// Determine what slot the beacon node is in by checking the number of seconds
 	// since the genesis block.
-	genesisTimestamp, err := ptypes.Timestamp(res.GetGenesisTimestamp())
+	genesisTimestamp, err := ptypes.TimestampFromProto(res.GetGenesisTimestamp())
 	if err != nil {
 		return fmt.Errorf("could not compute genesis timestamp: %v", err)
 	}
-
 	s.genesisTimestamp = genesisTimestamp
 
 	startSlot := s.startSlot()
@@ -185,7 +190,7 @@ func (s *Service) waitForAssignment(ticker <-chan uint64, client pb.BeaconServic
 				continue
 			}
 
-			block, err := client.CanonicalHead(s.ctx, &empty.Empty{})
+			block, err := client.CanonicalHead(s.ctx, &ptypes.Empty{})
 			if err != nil {
 				log.Errorf("Could not fetch canonical head via gRPC from beacon node: %v", err)
 				continue
@@ -207,7 +212,7 @@ func (s *Service) waitForAssignment(ticker <-chan uint64, client pb.BeaconServic
 // listenForProcessedAttestations receives processed attestations from the
 // the beacon node's RPC server via gRPC streams.
 func (s *Service) listenForProcessedAttestations(client pb.BeaconServiceClient) {
-	stream, err := client.LatestAttestation(s.ctx, &empty.Empty{})
+	stream, err := client.LatestAttestation(s.ctx, &ptypes.Empty{})
 	if err != nil {
 		log.Errorf("Could not setup beacon chain attestation streaming client: %v", err)
 		return
@@ -229,7 +234,7 @@ func (s *Service) listenForProcessedAttestations(client pb.BeaconServiceClient) 
 			continue
 		}
 
-		log.WithField("slotNumber", attestation.GetSlot()).Info("Latest attestation slot number")
+		log.WithField("slotNumber", attestation.GetData().GetSlot()).Info("Latest attestation slot number")
 		s.processedAttestationFeed.Send(attestation)
 	}
 }
