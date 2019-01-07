@@ -29,14 +29,12 @@ func TestProcessBlock_IncorrectSlot(t *testing.T) {
 func TestProcessBlock_IncorrectBlockRandao(t *testing.T) {
 	registry := []*pb.ValidatorRecord{
 		{
-			Status:                 pb.ValidatorRecord_ACTIVE,
-			LatestStatusChangeSlot: 0,
+			ExitSlot:               params.BeaconConfig().FarFutureSlot,
 			RandaoCommitmentHash32: []byte{0},
 			RandaoLayers:           0,
 		},
 		{
-			Status:                 pb.ValidatorRecord_ACTIVE,
-			LatestStatusChangeSlot: 0,
+			ExitSlot:               params.BeaconConfig().FarFutureSlot,
 			RandaoCommitmentHash32: []byte{0},
 			RandaoLayers:           0,
 		},
@@ -69,14 +67,12 @@ func TestProcessBlock_IncorrectBlockRandao(t *testing.T) {
 func TestProcessBlock_IncorrectProposerSlashing(t *testing.T) {
 	registry := []*pb.ValidatorRecord{
 		{
-			Status:                 pb.ValidatorRecord_ACTIVE,
-			LatestStatusChangeSlot: 0,
+			ExitSlot:               params.BeaconConfig().FarFutureSlot,
 			RandaoCommitmentHash32: []byte{1},
 			RandaoLayers:           0,
 		},
 		{
-			Status:                 pb.ValidatorRecord_ACTIVE,
-			LatestStatusChangeSlot: 0,
+			ExitSlot:               params.BeaconConfig().FarFutureSlot,
 			RandaoCommitmentHash32: []byte{1},
 			RandaoLayers:           0,
 		},
@@ -114,14 +110,12 @@ func TestProcessBlock_IncorrectProposerSlashing(t *testing.T) {
 func TestProcessBlock_IncorrectCasperSlashing(t *testing.T) {
 	registry := []*pb.ValidatorRecord{
 		{
-			Status:                 pb.ValidatorRecord_ACTIVE,
-			LatestStatusChangeSlot: 0,
+			ExitSlot:               params.BeaconConfig().FarFutureSlot,
 			RandaoCommitmentHash32: []byte{1},
 			RandaoLayers:           0,
 		},
 		{
-			Status:                 pb.ValidatorRecord_ACTIVE,
-			LatestStatusChangeSlot: 0,
+			ExitSlot:               params.BeaconConfig().FarFutureSlot,
 			RandaoCommitmentHash32: []byte{1},
 			RandaoLayers:           0,
 		},
@@ -175,14 +169,12 @@ func TestProcessBlock_IncorrectCasperSlashing(t *testing.T) {
 func TestProcessBlock_IncorrectProcessBlockAttestations(t *testing.T) {
 	registry := []*pb.ValidatorRecord{
 		{
-			Status:                 pb.ValidatorRecord_ACTIVE,
-			LatestStatusChangeSlot: 0,
+			ExitSlot:               params.BeaconConfig().FarFutureSlot,
 			RandaoCommitmentHash32: []byte{1},
 			RandaoLayers:           0,
 		},
 		{
-			Status:                 pb.ValidatorRecord_ACTIVE,
-			LatestStatusChangeSlot: 0,
+			ExitSlot:               params.BeaconConfig().FarFutureSlot,
 			RandaoCommitmentHash32: []byte{1},
 			RandaoLayers:           0,
 		},
@@ -259,14 +251,12 @@ func TestProcessBlock_IncorrectProcessBlockAttestations(t *testing.T) {
 func TestProcessBlock_IncorrectProcessExits(t *testing.T) {
 	registry := []*pb.ValidatorRecord{
 		{
-			Status:                 pb.ValidatorRecord_ACTIVE,
-			LatestStatusChangeSlot: 0,
+			ExitSlot:               params.BeaconConfig().FarFutureSlot,
 			RandaoCommitmentHash32: []byte{1},
 			RandaoLayers:           0,
 		},
 		{
-			Status:                 pb.ValidatorRecord_ACTIVE,
-			LatestStatusChangeSlot: 0,
+			ExitSlot:               params.BeaconConfig().FarFutureSlot,
 			RandaoCommitmentHash32: []byte{1},
 			RandaoLayers:           0,
 		},
@@ -369,14 +359,12 @@ func TestProcessBlock_IncorrectProcessExits(t *testing.T) {
 func TestProcessBlock_PassesProcessingConditions(t *testing.T) {
 	registry := []*pb.ValidatorRecord{
 		{
-			Status:                 pb.ValidatorRecord_ACTIVE,
-			LatestStatusChangeSlot: 0,
+			ExitSlot:               params.BeaconConfig().FarFutureSlot,
 			RandaoCommitmentHash32: []byte{1},
 			RandaoLayers:           0,
 		},
 		{
-			Status:                 pb.ValidatorRecord_ACTIVE,
-			LatestStatusChangeSlot: 0,
+			ExitSlot:               params.BeaconConfig().FarFutureSlot,
 			RandaoCommitmentHash32: []byte{1},
 			RandaoLayers:           0,
 		},
@@ -477,51 +465,5 @@ func TestProcessBlock_PassesProcessingConditions(t *testing.T) {
 	}
 	if _, err := ProcessBlock(beaconState, block); err != nil {
 		t.Errorf("Expected block to pass processing conditions: %v", err)
-	}
-}
-
-func TestIsNewValidatorSetTransition(t *testing.T) {
-	beaconState, err := NewGenesisBeaconState(nil)
-	if err != nil {
-		t.Fatalf("Failed to initialize state: %v", err)
-	}
-	beaconState.ValidatorRegistryLastChangeSlot = 1
-	if IsValidatorSetChange(beaconState, 0) {
-		t.Errorf("Is new validator set change should be false, last changed slot greater than finalized slot")
-	}
-	beaconState.FinalizedSlot = 2
-	if IsValidatorSetChange(beaconState, 2) {
-		t.Errorf("Is new validator set change should be false, MinValidatorSetChangeInterval has not reached")
-	}
-	shardCommitteeForSlots := []*pb.ShardAndCommitteeArray{{
-		ArrayShardAndCommittee: []*pb.ShardAndCommittee{
-			{Shard: 0},
-			{Shard: 1},
-			{Shard: 2},
-		},
-	},
-	}
-	beaconState.ShardAndCommitteesAtSlots = shardCommitteeForSlots
-
-	crosslinks := []*pb.CrosslinkRecord{
-		{Slot: 1},
-		{Slot: 1},
-		{Slot: 1},
-	}
-	beaconState.LatestCrosslinks = crosslinks
-
-	if IsValidatorSetChange(beaconState, params.BeaconConfig().MinValidatorSetChangeInterval+1) {
-		t.Errorf("Is new validator set change should be false, crosslink slot record is higher than current slot")
-	}
-
-	crosslinks = []*pb.CrosslinkRecord{
-		{Slot: 2},
-		{Slot: 2},
-		{Slot: 2},
-	}
-	beaconState.LatestCrosslinks = crosslinks
-
-	if !IsValidatorSetChange(beaconState, params.BeaconConfig().MinValidatorSetChangeInterval+1) {
-		t.Errorf("New validator set change failed should have been true")
 	}
 }

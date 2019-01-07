@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io/ioutil"
 	"math/big"
+	"strconv"
 	"testing"
+	"time"
 
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -201,7 +203,24 @@ func TestRunningChainService(t *testing.T) {
 	db := internal.SetupDB(t)
 	defer internal.TeardownDB(t, db)
 	chainService := setupBeaconChain(t, false, db)
-	beaconState, err := state.NewGenesisBeaconState(nil)
+	deposits := make([]*pb.Deposit, params.BeaconConfig().DepositsForChainStart)
+	for i := 0; i < len(deposits); i++ {
+		depositInput := &pb.DepositInput{
+			Pubkey: []byte(strconv.Itoa(i)),
+			RandaoCommitmentHash32: []byte{41, 13, 236, 217, 84, 139, 98, 168, 214, 3, 69,
+				169, 136, 56, 111, 200, 75, 166, 188, 149, 72, 64, 8, 246, 54, 47, 147, 22, 14, 243, 229, 99},
+		}
+		depositData, err := b.EncodeDepositData(
+			depositInput,
+			params.BeaconConfig().MaxDepositInGwei,
+			time.Now().Unix(),
+		)
+		if err != nil {
+			t.Fatalf("Could not encode deposit input: %v", err)
+		}
+		deposits[i] = &pb.Deposit{DepositData: depositData}
+	}
+	beaconState, err := state.InitialBeaconState(deposits, 0, nil)
 	if err != nil {
 		t.Fatalf("Can't generate genesis state: %v", err)
 	}
@@ -218,7 +237,9 @@ func TestRunningChainService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to get hash of canonical head: %v", err)
 	}
-
+	if err := chainService.beaconDB.SaveState(beaconState); err != nil {
+		t.Fatalf("Can't save state to db %v", err)
+	}
 	beaconState, err = chainService.beaconDB.GetState()
 	if err != nil {
 		t.Fatalf("Can't get state from db %v", err)
@@ -252,9 +273,10 @@ func TestRunningChainService(t *testing.T) {
 				ParticipationBitfield: []byte{128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 					0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 				Data: &pb.AttestationData{
-					Slot:                     attestationSlot,
-					Shard:                    shard,
-					JustifiedBlockRootHash32: []byte{},
+					Slot:                      attestationSlot,
+					Shard:                     shard,
+					JustifiedBlockRootHash32:  params.BeaconConfig().ZeroHash[:],
+					LatestCrosslinkRootHash32: params.BeaconConfig().ZeroHash[:],
 				},
 			}},
 		},
@@ -297,7 +319,7 @@ func TestDoesPOWBlockExist(t *testing.T) {
 
 	// Using a faulty client should throw error.
 	var powHash [32]byte
-	copy(powHash[:], beaconState.GetProcessedPowReceiptRootHash32())
+	copy(powHash[:], beaconState.ProcessedPowReceiptRootHash32)
 	exists := chainService.doesPoWBlockExist(powHash)
 	if exists {
 		t.Error("Block corresponding to nil powchain reference should not exist")
@@ -306,7 +328,7 @@ func TestDoesPOWBlockExist(t *testing.T) {
 }
 
 func TestUpdateHead(t *testing.T) {
-	beaconState, err := state.NewGenesisBeaconState(nil)
+	beaconState, err := state.InitialBeaconState(nil, 0, nil)
 	if err != nil {
 		t.Fatalf("Cannot create genesis beacon state: %v", err)
 	}
@@ -397,7 +419,7 @@ func TestIsBlockReadyForProcessing(t *testing.T) {
 	db := internal.SetupDB(t)
 	defer internal.TeardownDB(t, db)
 	chainService := setupBeaconChain(t, false, db)
-	beaconState, err := state.NewGenesisBeaconState(nil)
+	beaconState, err := state.InitialBeaconState(nil, 0, nil)
 	if err != nil {
 		t.Fatalf("Can't generate genesis state: %v", err)
 	}
@@ -406,14 +428,11 @@ func TestIsBlockReadyForProcessing(t *testing.T) {
 		ParentRootHash32: []byte{'a'},
 	}
 
-	if err := chainService.isBlockReadyForProcessing(block); err == nil {
+	if err := chainService.isBlockReadyForProcessing(block, beaconState); err == nil {
 		t.Fatal("block processing succeeded despite block having no parent saved")
 	}
 
 	beaconState.Slot = 10
-	if err := chainService.beaconDB.SaveState(beaconState); err != nil {
-		t.Fatalf("cannot save state: %v", err)
-	}
 
 	enc, _ := proto.Marshal(beaconState)
 	stateRoot := hashutil.Hash(enc)
@@ -431,7 +450,7 @@ func TestIsBlockReadyForProcessing(t *testing.T) {
 		Slot:             10,
 	}
 
-	if err := chainService.isBlockReadyForProcessing(block2); err == nil {
+	if err := chainService.isBlockReadyForProcessing(block2, beaconState); err == nil {
 		t.Fatal("block processing succeeded despite block slot being invalid")
 	}
 
@@ -439,13 +458,10 @@ func TestIsBlockReadyForProcessing(t *testing.T) {
 	copy(h[:], []byte("a"))
 	beaconState.ProcessedPowReceiptRootHash32 = h[:]
 	beaconState.Slot = 0
-	if err := chainService.beaconDB.SaveState(beaconState); err != nil {
-		t.Fatalf("cannot save state: %v", err)
-	}
 
 	currentSlot := uint64(1)
 	attestationSlot := uint64(0)
-	shard := beaconState.GetShardAndCommitteesAtSlots()[attestationSlot].ArrayShardAndCommittee[0].Shard
+	shard := beaconState.ShardAndCommitteesAtSlots[attestationSlot].ArrayShardAndCommittee[0].Shard
 
 	block3 := &pb.BeaconBlock{
 		Slot:                          currentSlot,
@@ -467,7 +483,7 @@ func TestIsBlockReadyForProcessing(t *testing.T) {
 
 	chainService.enablePOWChain = true
 
-	if err := chainService.isBlockReadyForProcessing(block3); err != nil {
+	if err := chainService.isBlockReadyForProcessing(block3, beaconState); err != nil {
 		t.Fatalf("block processing failed despite being a valid block: %v", err)
 	}
 }

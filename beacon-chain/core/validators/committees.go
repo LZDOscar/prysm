@@ -15,47 +15,15 @@ func ShuffleValidatorRegistryToCommittees(
 	seed [32]byte,
 	validators []*pb.ValidatorRecord,
 	crosslinkStartShard uint64,
+	slot uint64,
 ) ([]*pb.ShardAndCommitteeArray, error) {
-	indices := ActiveValidatorIndices(validators)
+	indices := ActiveValidatorIndices(validators, slot)
 	// split the shuffled list for slot.
 	shuffledValidatorRegistry, err := utils.ShuffleIndices(seed, indices)
 	if err != nil {
 		return nil, err
 	}
 	return splitBySlotShard(shuffledValidatorRegistry, crosslinkStartShard), nil
-}
-
-// InitialShardAndCommitteesForSlots initialises the committees for shards by shuffling the validators
-// and assigning them to specific shards.
-func InitialShardAndCommitteesForSlots(validators []*pb.ValidatorRecord) ([]*pb.ShardAndCommitteeArray, error) {
-	seed := [32]byte{}
-	committees, err := ShuffleValidatorRegistryToCommittees(seed, validators, 1)
-	if err != nil {
-		return nil, err
-	}
-
-	// Initialize with 3 cycles of the same committees.
-	initialCommittees := make([]*pb.ShardAndCommitteeArray, 0, 3*params.BeaconConfig().CycleLength)
-	initialCommittees = append(initialCommittees, committees...)
-	initialCommittees = append(initialCommittees, committees...)
-	initialCommittees = append(initialCommittees, committees...)
-	return initialCommittees, nil
-}
-
-// AttesterIndices returns the validator indices that acted as attesters
-// for a particular attestation.
-func AttesterIndices(
-	shardCommittees *pb.ShardAndCommitteeArray,
-	attestation *pb.Attestation,
-) ([]uint32, error) {
-	shardCommitteesArray := shardCommittees.ArrayShardAndCommittee
-	for _, shardCommittee := range shardCommitteesArray {
-		if attestation.GetData().GetShard() == shardCommittee.Shard {
-			return shardCommittee.Committee, nil
-		}
-	}
-
-	return nil, fmt.Errorf("unable to find committee for shard %d", attestation.GetData().GetShard())
 }
 
 // splitBySlotShard splits the validator list into evenly sized committees and assigns each
@@ -66,7 +34,7 @@ func splitBySlotShard(shuffledValidatorRegistry []uint32, crosslinkStartShard ui
 	committeBySlotAndShard := []*pb.ShardAndCommitteeArray{}
 
 	// split the validator indices by slot.
-	validatorsBySlot := utils.SplitIndices(shuffledValidatorRegistry, params.BeaconConfig().CycleLength)
+	validatorsBySlot := utils.SplitIndices(shuffledValidatorRegistry, params.BeaconConfig().EpochLength)
 	for i, validatorsForSlot := range validatorsBySlot {
 		shardCommittees := []*pb.ShardAndCommittee{}
 		validatorsByShard := utils.SplitIndices(validatorsForSlot, committeesPerSlot)
@@ -93,7 +61,7 @@ func splitBySlotShard(shuffledValidatorRegistry []uint32, crosslinkStartShard ui
 // numActiveValidatorRegistry / CycleLength /  (MinCommitteeSize*2) + 1 or
 // ShardCount / CycleLength.
 func getCommitteesPerSlot(numActiveValidatorRegistry uint64) uint64 {
-	cycleLength := params.BeaconConfig().CycleLength
+	cycleLength := params.BeaconConfig().EpochLength
 	boundOnValidatorRegistry := numActiveValidatorRegistry/cycleLength/(params.BeaconConfig().TargetCommitteeSize*2) + 1
 	boundOnShardCount := params.BeaconConfig().ShardCount / cycleLength
 	// Ensure that comitteesPerSlot is at least 1.
