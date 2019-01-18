@@ -1,3 +1,6 @@
+// Package blocks contains block processing libraries. These libraries
+// process and verify block specific messages such as PoW receipt root,
+// RANDAO, validator deposits, exits and slashing proofs.
 package blocks
 
 import (
@@ -7,24 +10,15 @@ import (
 	"math"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/prysmaticlabs/prysm/beacon-chain/utils"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
+	bytesutil "github.com/prysmaticlabs/prysm/shared/bytes"
 	"github.com/prysmaticlabs/prysm/shared/hashutil"
 	"github.com/prysmaticlabs/prysm/shared/params"
 	"github.com/prysmaticlabs/prysm/shared/ssz"
 )
 
 var clock utils.Clock = &utils.RealClock{}
-
-// Hash a beacon block data structure.
-func Hash(block *pb.BeaconBlock) ([32]byte, error) {
-	data, err := proto.Marshal(block)
-	if err != nil {
-		return [32]byte{}, fmt.Errorf("could not marshal block proto data: %v", err)
-	}
-	return hashutil.Hash(data), nil
-}
 
 // NewGenesisBlock returns the canonical, genesis block for the beacon chain protocol.
 func NewGenesisBlock(stateRoot []byte) *pb.BeaconBlock {
@@ -48,9 +42,7 @@ func NewGenesisBlock(stateRoot []byte) *pb.BeaconBlock {
 // IsRandaoValid verifies the validity of randao from block by comparing it with
 // the proposer's randao from the beacon state.
 func IsRandaoValid(blockRandao []byte, stateRandao []byte) bool {
-	var h [32]byte
-	copy(h[:], stateRandao)
-	return hashutil.Hash(blockRandao) == h
+	return hashutil.Hash(blockRandao) == bytesutil.ToBytes32(stateRandao)
 }
 
 // IsSlotValid compares the slot to the system clock to determine if the block is valid.
@@ -155,8 +147,56 @@ func EncodeDepositData(
 	timestamp := make([]byte, 8)
 	binary.BigEndian.PutUint64(timestamp, uint64(depositTimestamp))
 
-	depositData = append(depositData, encodedInput...)
 	depositData = append(depositData, value...)
 	depositData = append(depositData, timestamp...)
+	depositData = append(depositData, encodedInput...)
+
 	return depositData, nil
+}
+
+// DecodeDepositInput unmarshalls a depositData byte slice into
+// a proto *pb.DepositInput by using the Simple Serialize (SSZ)
+// algorithm.
+// TODO(#1253): Do not assume we will receive serialized proto objects - instead,
+// replace completely by a common struct which can be simple serialized.
+func DecodeDepositInput(depositData []byte) (*pb.DepositInput, error) {
+	// Last 16 bytes of deposit data are 8 bytes for value
+	// and 8 bytes for timestamp. Everything before that is a
+	// Simple Serialized deposit input value.
+	if len(depositData) < 16 {
+		return nil, fmt.Errorf(
+			"deposit data slice too small: len(depositData) = %d",
+			len(depositData),
+		)
+	}
+	depositInput := new(pb.DepositInput)
+	// Since the value deposited and the timestamp are both 8 bytes each,
+	// the deposit data is the chunk after the first 16 bytes.
+	depositInputBytes := depositData[16:]
+	rBuf := bytes.NewReader(depositInputBytes)
+	if err := ssz.Decode(rBuf, depositInput); err != nil {
+		return nil, fmt.Errorf("ssz decode failed: %v", err)
+	}
+	return depositInput, nil
+}
+
+// DecodeDepositAmountAndTimeStamp extracts the deposit amount and timestamp
+// from the given deposit data.
+func DecodeDepositAmountAndTimeStamp(depositData []byte) (uint64, int64, error) {
+	// Last 16 bytes of deposit data are 8 bytes for value
+	// and 8 bytes for timestamp. Everything before that is a
+	// Simple Serialized deposit input value.
+	if len(depositData) < 16 {
+		return 0, 0, fmt.Errorf(
+			"deposit data slice too small: len(depositData) = %d",
+			len(depositData),
+		)
+	}
+
+	// the amount occupies the first 8 bytes while the
+	// timestamp occupies the next 8 bytes.
+	amount := binary.BigEndian.Uint64(depositData[:8])
+	timestamp := binary.BigEndian.Uint64(depositData[8:16])
+
+	return amount, int64(timestamp), nil
 }

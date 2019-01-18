@@ -20,6 +20,7 @@ import (
 	"github.com/prysmaticlabs/prysm/beacon-chain/internal"
 	"github.com/prysmaticlabs/prysm/beacon-chain/powchain"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
+	bytesutil "github.com/prysmaticlabs/prysm/shared/bytes"
 	"github.com/prysmaticlabs/prysm/shared/hashutil"
 	"github.com/prysmaticlabs/prysm/shared/params"
 	"github.com/prysmaticlabs/prysm/shared/testutil"
@@ -34,20 +35,41 @@ func init() {
 
 type mockClient struct{}
 
-func (f *mockClient) SubscribeNewHead(ctx context.Context, ch chan<- *gethTypes.Header) (ethereum.Subscription, error) {
+func (m *mockClient) SubscribeNewHead(ctx context.Context, ch chan<- *gethTypes.Header) (ethereum.Subscription, error) {
 	return new(event.Feed).Subscribe(ch), nil
 }
 
-func (f *mockClient) BlockByHash(ctx context.Context, hash common.Hash) (*gethTypes.Block, error) {
+func (m *mockClient) BlockByHash(ctx context.Context, hash common.Hash) (*gethTypes.Block, error) {
 	head := &gethTypes.Header{Number: big.NewInt(0), Difficulty: big.NewInt(100)}
 	return gethTypes.NewBlockWithHeader(head), nil
 }
 
-func (f *mockClient) SubscribeFilterLogs(ctx context.Context, q ethereum.FilterQuery, ch chan<- gethTypes.Log) (ethereum.Subscription, error) {
+func (m *mockClient) SubscribeFilterLogs(ctx context.Context, q ethereum.FilterQuery, ch chan<- gethTypes.Log) (ethereum.Subscription, error) {
 	return new(event.Feed).Subscribe(ch), nil
 }
 
-func (f *mockClient) LatestBlockHash() common.Hash {
+func (m *mockClient) CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
+	return []byte{'t', 'e', 's', 't'}, nil
+}
+
+func (m *mockClient) CodeAt(ctx context.Context, account common.Address, blockNumber *big.Int) ([]byte, error) {
+	return []byte{'t', 'e', 's', 't'}, nil
+}
+
+func (m *mockClient) FilterLogs(ctx context.Context, q ethereum.FilterQuery) ([]gethTypes.Log, error) {
+	logs := make([]gethTypes.Log, 3)
+	for i := 0; i < len(logs); i++ {
+		logs[i].Address = common.Address{}
+		logs[i].Topics = make([]common.Hash, 5)
+		logs[i].Topics[0] = common.Hash{'a'}
+		logs[i].Topics[1] = common.Hash{'b'}
+		logs[i].Topics[2] = common.Hash{'c'}
+
+	}
+	return logs, nil
+}
+
+func (m *mockClient) LatestBlockHash() common.Hash {
 	return common.BytesToHash([]byte{'A'})
 }
 
@@ -65,6 +87,18 @@ func (f *faultyClient) SubscribeFilterLogs(ctx context.Context, q ethereum.Filte
 	return new(event.Feed).Subscribe(ch), nil
 }
 
+func (f *faultyClient) FilterLogs(ctx context.Context, q ethereum.FilterQuery) ([]gethTypes.Log, error) {
+	return nil, errors.New("unable to retrieve logs")
+}
+
+func (f *faultyClient) CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
+	return []byte{}, errors.New("unable to retrieve contract code")
+}
+
+func (f *faultyClient) CodeAt(ctx context.Context, account common.Address, blockNumber *big.Int) ([]byte, error) {
+	return []byte{}, errors.New("unable to retrieve contract code")
+}
+
 func (f *faultyClient) LatestBlockHash() common.Hash {
 	return common.BytesToHash([]byte{'A'})
 }
@@ -77,28 +111,26 @@ func setupBeaconChain(t *testing.T, faultyPoWClient bool, beaconDB *db.BeaconDB)
 	if faultyPoWClient {
 		client := &faultyClient{}
 		web3Service, err = powchain.NewWeb3Service(ctx, &powchain.Web3ServiceConfig{
-			Endpoint: endpoint,
-			Pubkey:   "",
-			VrcAddr:  common.Address{},
-			Reader:   client,
-			Client:   client,
-			Logger:   client,
+			Endpoint:        endpoint,
+			DepositContract: common.Address{},
+			Reader:          client,
+			Client:          client,
+			Logger:          client,
 		})
 	} else {
 		client := &mockClient{}
 		web3Service, err = powchain.NewWeb3Service(ctx, &powchain.Web3ServiceConfig{
-			Endpoint: endpoint,
-			Pubkey:   "",
-			VrcAddr:  common.Address{},
-			Reader:   client,
-			Client:   client,
-			Logger:   client,
+			Endpoint:        endpoint,
+			DepositContract: common.Address{},
+			Reader:          client,
+			Client:          client,
+			Logger:          client,
 		})
 	}
 	if err != nil {
 		t.Fatalf("unable to set up web3 service: %v", err)
 	}
-	if err := beaconDB.InitializeState(nil); err != nil {
+	if err := beaconDB.InitializeState(); err != nil {
 		t.Fatalf("failed to initialize state: %v", err)
 	}
 
@@ -163,7 +195,7 @@ func TestRunningChainServiceFaultyPOWChain(t *testing.T) {
 		Slot: 1,
 	}
 
-	parentHash, err := b.Hash(parentBlock)
+	parentHash, err := hashutil.HashBeaconBlock(parentBlock)
 	if err != nil {
 		t.Fatalf("Unable to hash block %v", err)
 	}
@@ -173,9 +205,9 @@ func TestRunningChainServiceFaultyPOWChain(t *testing.T) {
 	}
 
 	block := &pb.BeaconBlock{
-		Slot:                          2,
-		ParentRootHash32:              parentHash[:],
-		CandidatePowReceiptRootHash32: []byte("a"),
+		Slot:              2,
+		ParentRootHash32:  parentHash[:],
+		DepositRootHash32: []byte("a"),
 	}
 
 	blockChan := make(chan *pb.BeaconBlock)
@@ -233,7 +265,7 @@ func TestRunningChainService(t *testing.T) {
 	if err := chainService.beaconDB.SaveBlock(genesis); err != nil {
 		t.Fatalf("could not save block to db: %v", err)
 	}
-	parentHash, err := b.Hash(genesis)
+	parentHash, err := hashutil.HashBeaconBlock(genesis)
 	if err != nil {
 		t.Fatalf("unable to get hash of canonical head: %v", err)
 	}
@@ -245,29 +277,29 @@ func TestRunningChainService(t *testing.T) {
 		t.Fatalf("Can't get state from db %v", err)
 	}
 
-	var shardAndCommittees []*pb.ShardAndCommitteeArray
+	var ShardCommittees []*pb.ShardCommitteeArray
 	for i := uint64(0); i < params.BeaconConfig().EpochLength*2; i++ {
-		shardAndCommittees = append(shardAndCommittees, &pb.ShardAndCommitteeArray{
-			ArrayShardAndCommittee: []*pb.ShardAndCommittee{
+		ShardCommittees = append(ShardCommittees, &pb.ShardCommitteeArray{
+			ArrayShardCommittee: []*pb.ShardCommittee{
 				{Committee: []uint32{9, 8, 311, 12, 92, 1, 23, 17}},
 			},
 		})
 	}
 
-	beaconState.ShardAndCommitteesAtSlots = shardAndCommittees
+	beaconState.ShardCommitteesAtSlots = ShardCommittees
 	if err := chainService.beaconDB.SaveState(beaconState); err != nil {
 		t.Fatal(err)
 	}
 
 	currentSlot := uint64(5)
 	attestationSlot := uint64(0)
-	shard := beaconState.ShardAndCommitteesAtSlots[attestationSlot].ArrayShardAndCommittee[0].Shard
+	shard := beaconState.ShardCommitteesAtSlots[attestationSlot].ArrayShardCommittee[0].Shard
 
 	block := &pb.BeaconBlock{
-		Slot:                          currentSlot + 1,
-		StateRootHash32:               stateRoot[:],
-		ParentRootHash32:              parentHash[:],
-		CandidatePowReceiptRootHash32: []byte("a"),
+		Slot:              currentSlot + 1,
+		StateRootHash32:   stateRoot[:],
+		ParentRootHash32:  parentHash[:],
+		DepositRootHash32: []byte("a"),
 		Body: &pb.BeaconBlockBody{
 			Attestations: []*pb.Attestation{{
 				ParticipationBitfield: []byte{128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -318,8 +350,7 @@ func TestDoesPOWBlockExist(t *testing.T) {
 	}
 
 	// Using a faulty client should throw error.
-	var powHash [32]byte
-	copy(powHash[:], beaconState.ProcessedPowReceiptRootHash32)
+	powHash := bytesutil.ToBytes32(beaconState.LatestDepositRootHash32)
 	exists := chainService.doesPoWBlockExist(powHash)
 	if exists {
 		t.Error("Block corresponding to nil powchain reference should not exist")
@@ -336,7 +367,7 @@ func TestUpdateHead(t *testing.T) {
 	stateRoot := hashutil.Hash(enc)
 
 	genesis := b.NewGenesisBlock(stateRoot[:])
-	genesisHash, err := b.Hash(genesis)
+	genesisHash, err := hashutil.HashBeaconBlock(genesis)
 	if err != nil {
 		t.Fatalf("Could not get genesis block hash: %v", err)
 	}
@@ -384,12 +415,12 @@ func TestUpdateHead(t *testing.T) {
 		enc, _ := proto.Marshal(tt.state)
 		stateRoot := hashutil.Hash(enc)
 		block := &pb.BeaconBlock{
-			Slot:                          tt.blockSlot,
-			StateRootHash32:               stateRoot[:],
-			ParentRootHash32:              genesisHash[:],
-			CandidatePowReceiptRootHash32: []byte("a"),
+			Slot:              tt.blockSlot,
+			StateRootHash32:   stateRoot[:],
+			ParentRootHash32:  genesisHash[:],
+			DepositRootHash32: []byte("a"),
 		}
-		h, err := b.Hash(block)
+		h, err := hashutil.HashBeaconBlock(block)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -419,11 +450,14 @@ func TestIsBlockReadyForProcessing(t *testing.T) {
 	db := internal.SetupDB(t)
 	defer internal.TeardownDB(t, db)
 	chainService := setupBeaconChain(t, false, db)
-	beaconState, err := state.InitialBeaconState(nil, 0, nil)
+	err := db.InitializeState()
 	if err != nil {
-		t.Fatalf("Can't generate genesis state: %v", err)
+		t.Fatalf("Can't initialze genesis state: %v", err)
 	}
-
+	beaconState, err := db.GetState()
+	if err != nil {
+		t.Fatalf("Can't get genesis state: %v", err)
+	}
 	block := &pb.BeaconBlock{
 		ParentRootHash32: []byte{'a'},
 	}
@@ -440,7 +474,7 @@ func TestIsBlockReadyForProcessing(t *testing.T) {
 	if err := chainService.beaconDB.SaveBlock(genesis); err != nil {
 		t.Fatalf("cannot save block: %v", err)
 	}
-	parentHash, err := b.Hash(genesis)
+	parentHash, err := hashutil.HashBeaconBlock(genesis)
 	if err != nil {
 		t.Fatalf("unable to get hash of canonical head: %v", err)
 	}
@@ -454,20 +488,19 @@ func TestIsBlockReadyForProcessing(t *testing.T) {
 		t.Fatal("block processing succeeded despite block slot being invalid")
 	}
 
-	var h [32]byte
-	copy(h[:], []byte("a"))
-	beaconState.ProcessedPowReceiptRootHash32 = h[:]
+	h := bytesutil.ToBytes32([]byte("a"))
+	beaconState.LatestDepositRootHash32 = h[:]
 	beaconState.Slot = 0
 
 	currentSlot := uint64(1)
 	attestationSlot := uint64(0)
-	shard := beaconState.ShardAndCommitteesAtSlots[attestationSlot].ArrayShardAndCommittee[0].Shard
+	shard := beaconState.ShardCommitteesAtSlots[attestationSlot].ArrayShardCommittee[0].Shard
 
 	block3 := &pb.BeaconBlock{
-		Slot:                          currentSlot,
-		StateRootHash32:               stateRoot[:],
-		ParentRootHash32:              parentHash[:],
-		CandidatePowReceiptRootHash32: []byte("a"),
+		Slot:              currentSlot,
+		StateRootHash32:   stateRoot[:],
+		ParentRootHash32:  parentHash[:],
+		DepositRootHash32: []byte("a"),
 		Body: &pb.BeaconBlockBody{
 			Attestations: []*pb.Attestation{{
 				ParticipationBitfield: []byte{128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

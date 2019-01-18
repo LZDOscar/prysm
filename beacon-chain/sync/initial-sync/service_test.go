@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/gogo/protobuf/proto"
-	b "github.com/prysmaticlabs/prysm/beacon-chain/core/blocks"
 	"github.com/prysmaticlabs/prysm/beacon-chain/core/state"
 	"github.com/prysmaticlabs/prysm/beacon-chain/internal"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
+	bytesutil "github.com/prysmaticlabs/prysm/shared/bytes"
 	"github.com/prysmaticlabs/prysm/shared/event"
 	"github.com/prysmaticlabs/prysm/shared/hashutil"
 	"github.com/prysmaticlabs/prysm/shared/p2p"
@@ -83,10 +83,10 @@ func TestSetBlockForInitialSync(t *testing.T) {
 	genericHash[0] = 'a'
 
 	block := &pb.BeaconBlock{
-		CandidatePowReceiptRootHash32: []byte{1, 2, 3},
-		ParentRootHash32:              genericHash,
-		Slot:                          uint64(1),
-		StateRootHash32:               genericHash,
+		DepositRootHash32: []byte{1, 2, 3},
+		ParentRootHash32:  genericHash,
+		Slot:              uint64(1),
+		StateRootHash32:   genericHash,
 	}
 
 	blockResponse := &pb.BeaconBlockResponse{Block: block}
@@ -100,8 +100,7 @@ func TestSetBlockForInitialSync(t *testing.T) {
 	ss.cancel()
 	<-exitRoutine
 
-	var stateHash [32]byte
-	copy(stateHash[:], blockResponse.Block.StateRootHash32)
+	stateHash := bytesutil.ToBytes32(blockResponse.Block.StateRootHash32)
 
 	if stateHash != ss.initialStateRootHash32 {
 		t.Fatalf("Beacon state hash not updated: %#x", blockResponse.Block.StateRootHash32)
@@ -164,10 +163,10 @@ func TestSavingBlocksInSync(t *testing.T) {
 
 	getBlockResponseMsg := func(Slot uint64) p2p.Message {
 		block := &pb.BeaconBlock{
-			CandidatePowReceiptRootHash32: []byte{1, 2, 3},
-			ParentRootHash32:              genericHash,
-			Slot:                          Slot,
-			StateRootHash32:               beaconStateRootHash32[:],
+			DepositRootHash32: []byte{1, 2, 3},
+			ParentRootHash32:  genericHash,
+			Slot:              Slot,
+			StateRootHash32:   beaconStateRootHash32[:],
 		}
 
 		blockResponse := &pb.BeaconBlockResponse{
@@ -274,10 +273,10 @@ func TestDelayChan(t *testing.T) {
 	beaconStateRootHash32 := hashutil.Hash(enc)
 
 	block := &pb.BeaconBlock{
-		CandidatePowReceiptRootHash32: []byte{1, 2, 3},
-		ParentRootHash32:              genericHash,
-		Slot:                          uint64(1),
-		StateRootHash32:               beaconStateRootHash32[:],
+		DepositRootHash32: []byte{1, 2, 3},
+		ParentRootHash32:  genericHash,
+		Slot:              uint64(1),
+		StateRootHash32:   beaconStateRootHash32[:],
 	}
 
 	blockResponse := &pb.BeaconBlockResponse{
@@ -354,17 +353,17 @@ func TestRequestBlocksBySlot(t *testing.T) {
 	getBlockResponseMsg := func(Slot uint64) (p2p.Message, [32]byte) {
 
 		block := &pb.BeaconBlock{
-			CandidatePowReceiptRootHash32: []byte{1, 2, 3},
-			ParentRootHash32:              genericHash,
-			Slot:                          Slot,
-			StateRootHash32:               nil,
+			DepositRootHash32: []byte{1, 2, 3},
+			ParentRootHash32:  genericHash,
+			Slot:              Slot,
+			StateRootHash32:   nil,
 		}
 
 		blockResponse := &pb.BeaconBlockResponse{
 			Block: block,
 		}
 
-		hash, err := b.Hash(block)
+		hash, err := hashutil.HashBeaconBlock(block)
 		if err != nil {
 			t.Fatalf("unable to hash block %v", err)
 		}

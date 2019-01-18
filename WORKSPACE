@@ -302,13 +302,13 @@ go_repository(
 
 go_repository(
     name = "com_github_btcsuite_btcd",
-    commit = "7d2daa5bfef28c5e282571bc06416516936115ee",
+    commit = "ed77733ec07dfc8a513741138419b8d9d3de9d2d",
     importpath = "github.com/btcsuite/btcd",
 )
 
 go_repository(
     name = "com_github_minio_sha256_simd",
-    commit = "66352e71c5e1cd598fa97be77a56fe3973730042",
+    commit = "cc1980cb03383b1d46f518232672584432d7532d",
     importpath = "github.com/minio/sha256-simd",
 )
 
@@ -453,7 +453,7 @@ go_repository(
 
 go_repository(
     name = "com_github_miekg_dns",
-    tag = "v1.1.2",
+    tag = "v1.1.3",
     importpath = "github.com/miekg/dns",
 )
 
@@ -465,7 +465,7 @@ go_repository(
 
 go_repository(
     name = "com_github_libp2p_go_reuseport",
-    tag = "v0.1.18",
+    tag = "v0.2.0",
     importpath = "github.com/libp2p/go-reuseport",
 )
 
@@ -501,7 +501,7 @@ go_repository(
 
 go_repository(
     name = "org_golang_x_sys",
-    commit = "cb59ee3660675d463e86971646692ea3e470021c",
+    commit = "11f53e03133963fb11ae0588e08b5e0b85be8be5",
     importpath = "golang.org/x/sys",
 )
 
@@ -555,7 +555,7 @@ go_repository(
 
 go_repository(
     name = "com_github_libp2p_go_reuseport_transport",
-    tag = "v0.1.11",
+    tag = "v0.2.0",
     importpath = "github.com/libp2p/go-reuseport-transport",
 )
 
@@ -645,7 +645,7 @@ go_repository(
 
 go_repository(
     name = "com_github_aristanetworks_goarista",
-    commit = "332ede26fbf000b0af488b1836b53b44d2a7c46c",
+    commit = "b7a59f2ffb2369336aaa78fc9a555e4fd277616b",
     importpath = "github.com/aristanetworks/goarista",
 )
 
@@ -657,7 +657,7 @@ go_repository(
 
 go_repository(
     name = "com_github_prometheus_client_model",
-    commit = "5c3871d89910bfb32f5fcab2aa4b9ec68e65a99f",
+    commit = "56726106282f1985ea77d5305743db7231b0c0a8",
     importpath = "github.com/prometheus/client_model",
 )
 
@@ -669,13 +669,13 @@ go_repository(
 
 go_repository(
     name = "com_github_prometheus_procfs",
-    commit = "b1a0a9a36d7453ba0f62578b99712f3a6c5f82d1",
+    commit = "bf6a532e95b1f7a62adf0ab5050a5bb2237ad2f4",
     importpath = "github.com/prometheus/procfs",
 )
 
 go_repository(
     name = "com_github_prometheus_prometheus",
-    tag = "v2.6.0",
+    tag = "v2.6.1",
     importpath = "github.com/prometheus/prometheus",
 )
 
@@ -718,7 +718,7 @@ go_repository(
 go_repository(
     name = "com_github_libp2p_go_libp2p_pubsub",
     build_file_proto_mode = "disable_global",
-    tag = "v0.10.2",
+    tag = "v0.11.10",
     importpath = "github.com/libp2p/go-libp2p-pubsub",
 )
 
@@ -910,7 +910,7 @@ go_repository(
 
 go_repository(
     name = "org_golang_x_oauth2",
-    commit = "d668ce993890a79bda886613ee587a69dd5da7a6",
+    commit = "5dab4167f31cbd76b407f1486c86b40748bc5073",
     importpath = "golang.org/x/oauth2",
 )
 
@@ -978,4 +978,10 @@ go_repository(
     name = "com_github_edsrzf_mmap_go",
     tag = "v1.0.0",
     importpath = "github.com/edsrzf/mmap-go",
+)
+
+go_repository(
+    name = "com_github_pkg_errors",
+    tag = "v0.8.1",
+    importpath = "github.com/pkg/errors",
 )

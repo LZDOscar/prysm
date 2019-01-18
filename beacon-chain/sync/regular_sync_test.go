@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/gogo/protobuf/proto"
-	b "github.com/prysmaticlabs/prysm/beacon-chain/core/blocks"
 	"github.com/prysmaticlabs/prysm/beacon-chain/db"
 	"github.com/prysmaticlabs/prysm/beacon-chain/internal"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
@@ -118,7 +117,7 @@ func TestProcessBlock(t *testing.T) {
 				169, 136, 56, 111, 200, 75, 166, 188, 149, 72, 64, 8, 246, 54, 47, 147, 22, 14, 243, 229, 99},
 		}
 	}
-	if err := db.InitializeState(validators); err != nil {
+	if err := db.InitializeState(); err != nil {
 		t.Fatalf("Failed to initialize state: %v", err)
 	}
 
@@ -144,15 +143,15 @@ func TestProcessBlock(t *testing.T) {
 	if err := db.SaveBlock(parentBlock); err != nil {
 		t.Fatalf("failed to save block: %v", err)
 	}
-	parentHash, err := b.Hash(parentBlock)
+	parentHash, err := hashutil.HashBeaconBlock(parentBlock)
 	if err != nil {
 		t.Fatalf("failed to get parent hash: %v", err)
 	}
 
 	data := &pb.BeaconBlock{
-		CandidatePowReceiptRootHash32: []byte{1, 2, 3, 4, 5},
-		ParentRootHash32:              parentHash[:],
-		Slot:                          1,
+		DepositRootHash32: []byte{1, 2, 3, 4, 5},
+		ParentRootHash32:  parentHash[:],
+		Slot:              1,
 	}
 	attestation := &pb.Attestation{
 		Data: &pb.AttestationData{
@@ -196,7 +195,7 @@ func TestProcessMultipleBlocks(t *testing.T) {
 				169, 136, 56, 111, 200, 75, 166, 188, 149, 72, 64, 8, 246, 54, 47, 147, 22, 14, 243, 229, 99},
 		}
 	}
-	if err := db.InitializeState(validators); err != nil {
+	if err := db.InitializeState(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -223,15 +222,15 @@ func TestProcessMultipleBlocks(t *testing.T) {
 	if err := db.SaveBlock(parentBlock); err != nil {
 		t.Fatalf("failed to save block: %v", err)
 	}
-	parentHash, err := b.Hash(parentBlock)
+	parentHash, err := hashutil.HashBeaconBlock(parentBlock)
 	if err != nil {
 		t.Fatalf("failed to get parent hash: %v", err)
 	}
 
 	data1 := &pb.BeaconBlock{
-		CandidatePowReceiptRootHash32: []byte{1, 2, 3, 4, 5},
-		ParentRootHash32:              parentHash[:],
-		Slot:                          1,
+		DepositRootHash32: []byte{1, 2, 3, 4, 5},
+		ParentRootHash32:  parentHash[:],
+		Slot:              1,
 	}
 
 	responseBlock1 := &pb.BeaconBlockResponse{
@@ -252,9 +251,9 @@ func TestProcessMultipleBlocks(t *testing.T) {
 	}
 
 	data2 := &pb.BeaconBlock{
-		CandidatePowReceiptRootHash32: []byte{6, 7, 8, 9, 10},
-		ParentRootHash32:              []byte{},
-		Slot:                          1,
+		DepositRootHash32: []byte{6, 7, 8, 9, 10},
+		ParentRootHash32:  []byte{},
+		Slot:              1,
 	}
 
 	responseBlock2 := &pb.BeaconBlockResponse{

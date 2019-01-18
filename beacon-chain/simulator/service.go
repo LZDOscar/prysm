@@ -8,13 +8,14 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/gogo/protobuf/proto"
-	b "github.com/prysmaticlabs/prysm/beacon-chain/core/blocks"
 	"github.com/prysmaticlabs/prysm/beacon-chain/core/state"
 	v "github.com/prysmaticlabs/prysm/beacon-chain/core/validators"
 	"github.com/prysmaticlabs/prysm/beacon-chain/db"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
 	"github.com/prysmaticlabs/prysm/shared/bitutil"
+	bytesutil "github.com/prysmaticlabs/prysm/shared/bytes"
 	"github.com/prysmaticlabs/prysm/shared/event"
+	"github.com/prysmaticlabs/prysm/shared/hashutil"
 	"github.com/prysmaticlabs/prysm/shared/p2p"
 	"github.com/prysmaticlabs/prysm/shared/params"
 	"github.com/prysmaticlabs/prysm/shared/slotticker"
@@ -152,7 +153,7 @@ func (sim *Simulator) run(slotInterval <-chan uint64) {
 		return
 	}
 
-	lastHash, err := b.Hash(lastBlock)
+	lastHash, err := hashutil.HashBeaconBlock(lastBlock)
 	if err != nil {
 		log.Errorf("Could not get hash of the latest block: %v", err)
 	}
@@ -176,7 +177,7 @@ func (sim *Simulator) run(slotInterval <-chan uint64) {
 				continue
 			}
 
-			hash, err := b.Hash(block)
+			hash, err := hashutil.HashBeaconBlock(block)
 			if err != nil {
 				log.Errorf("Could not hash simulated block: %v", err)
 				continue
@@ -214,9 +215,7 @@ func (sim *Simulator) run(slotInterval <-chan uint64) {
 func (sim *Simulator) processBlockReqByHash(msg p2p.Message) {
 
 	data := msg.Data.(*pb.BeaconBlockRequest)
-	var hash [32]byte
-	copy(hash[:], data.Hash)
-
+	hash := bytesutil.ToBytes32(data.Hash)
 	block := sim.broadcastedBlocksByHash[hash]
 	if block == nil {
 		log.WithFields(logrus.Fields{
@@ -344,7 +343,7 @@ func (sim *Simulator) generateBlock(slot uint64, lastHash [32]byte) (*pb.BeaconB
 	}
 
 	parentSlot := slot - 1
-	committees, err := v.ShardAndCommitteesAtSlot(
+	committees, err := v.ShardCommitteesAtSlot(
 		beaconState,
 		parentSlot,
 	)
@@ -355,7 +354,7 @@ func (sim *Simulator) generateBlock(slot uint64, lastHash [32]byte) (*pb.BeaconB
 	parentHash := make([]byte, 32)
 	copy(parentHash, lastHash[:])
 
-	shardCommittees := committees.ArrayShardAndCommittee
+	shardCommittees := committees.ArrayShardCommittee
 	attestations := make([]*pb.Attestation, len(shardCommittees))
 
 	// Create attestations for all committees of the previous block.
@@ -374,11 +373,11 @@ func (sim *Simulator) generateBlock(slot uint64, lastHash [32]byte) (*pb.BeaconB
 	}
 
 	block := &pb.BeaconBlock{
-		Slot:                          slot,
-		CandidatePowReceiptRootHash32: powChainRef,
-		StateRootHash32:               stateHash[:],
-		ParentRootHash32:              parentHash,
-		RandaoRevealHash32:            params.BeaconConfig().SimulatedBlockRandao[:],
+		Slot:               slot,
+		DepositRootHash32:  powChainRef,
+		StateRootHash32:    stateHash[:],
+		ParentRootHash32:   parentHash,
+		RandaoRevealHash32: params.BeaconConfig().SimulatedBlockRandao[:],
 		Body: &pb.BeaconBlockBody{
 			Attestations: attestations,
 		},
@@ -394,7 +393,7 @@ func (sim *Simulator) SendChainHead(peer p2p.Peer) error {
 		return err
 	}
 
-	hash, err := b.Hash(block)
+	hash, err := hashutil.HashBeaconBlock(block)
 	if err != nil {
 		return err
 	}

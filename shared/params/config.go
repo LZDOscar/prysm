@@ -27,6 +27,7 @@ type BeaconChainConfig struct {
 	LatestBlockRootsLength    uint64 // LatestBlockRootsLength is the number of block roots kept in the beacon state.
 	LatestRandaoMixesLength   uint64 // LatestRandaoMixesLength is the number of randao mixes kept in the beacon state.
 	LatestPenalizedExitLength uint64 // LatestPenalizedExitLength is used to track penalized exit balances per time interval.
+	MaxWithdrawalsPerEpoch    uint64 // MaxWithdrawalsPerEpoch is the max withdrawals can happen for a single epoch.
 
 	// Deposit contract constants.
 	DepositContractAddress   []byte // DepositContractAddress is the address of the deposit contract in PoW chain.
@@ -39,7 +40,6 @@ type BeaconChainConfig struct {
 	// Initial value constants.
 	GenesisForkVersion      uint64   // GenesisForkVersion is used to track fork version between state transitions.
 	GenesisSlot             uint64   // GenesisSlot is used to initialize the genesis state fields..
-	FarFutureSlot           uint64   // FarFutureSlot is used to track validator exit. Currently default to 2^64-1.
 	ZeroHash                [32]byte // ZeroHash is used to represent a zeroed out 32 byte array.
 	EmptySignature          [][]byte // EmptySignature is used to represent a zeroed out BLS Signature.
 	BLSWithdrawalPrefixByte byte     // BLSWithdrawalPrefixByte is used for BLS withdrawal and it's the first byte.
@@ -50,8 +50,9 @@ type BeaconChainConfig struct {
 	EpochLength                  uint64 // EpochLength is the number of slots in an epoch.
 	SeedLookahead                uint64 // SeedLookahead is the duration of randao look ahead seed.
 	EntryExitDelay               uint64 // EntryExitDelay is the duration a validator has to wait for entry and exit.
-	PowReceiptRootVotingPeriod   uint64 // PowReceiptRootVotingPeriod defines how often PoW hash gets updated in beacon node.
+	DepositRootVotingPeriod      uint64 // DepositRootVotingPeriod defines how often the merkle root of deposit receipts get updated in beacon node.
 	MinValidatorWithdrawalTime   uint64 // MinValidatorWithdrawalTime is the shortest amount of time a validator can get the deposit out.
+	FarFutureSlot                uint64 // FarFutureSlot represents a slot extremely far away in the future used as the default penalization slot for validators.
 
 	// Reward and penalty quotients constants.
 	BaseRewardQuotient           uint64 // BaseRewardQuotient is used to calculate validator per-slot interest rate.
@@ -67,13 +68,12 @@ type BeaconChainConfig struct {
 	MaxCasperSlashings   uint64 // MaxCasperSlashings defines the maximum number of casper FFG slashings possible in a block.
 
 	// Prysm constants.
-	DepositsForChainStart      uint64    // DepositsForChainStart defines how many validator deposits needed to kick off beacon chain.
-	POWContractMerkleTreeDepth uint64    // POWContractMerkleTreeDepth defines the depth of PoW contract merkle tree.
-	SimulatedBlockRandao       [32]byte  // SimulatedBlockRandao is a RANDAO seed stubbed in simulated block for advancing local beacon chain.
-	RandBytes                  uint64    // RandBytes is the number of bytes used as entropy to shuffle validators.
-	SyncPollingInterval        int64     // SyncPollingInterval queries network nodes for sync status.
-	GenesisTime                time.Time // GenesisTime used by the protocol.
-	MaxNumLog2Validators       uint64    // MaxNumLog2Validators is the Max number of validators in Log2 exists given total ETH supply.
+	DepositsForChainStart uint64    // DepositsForChainStart defines how many validator deposits needed to kick off beacon chain.
+	SimulatedBlockRandao  [32]byte  // SimulatedBlockRandao is a RANDAO seed stubbed in simulated block for advancing local beacon chain.
+	RandBytes             uint64    // RandBytes is the number of bytes used as entropy to shuffle validators.
+	SyncPollingInterval   int64     // SyncPollingInterval queries network nodes for sync status.
+	GenesisTime           time.Time // GenesisTime used by the protocol.
+	MaxNumLog2Validators  uint64    // MaxNumLog2Validators is the Max number of validators in Log2 exists given total ETH supply.
 }
 
 // ShardChainConfig contains configs for node to participate in shard chains.
@@ -88,12 +88,14 @@ var defaultBeaconConfig = &BeaconChainConfig{
 	TargetCommitteeSize:       256,
 	EjectionBalance:           16,
 	EjectionBalanceInGwei:     16 * 1e9,
+	MaxBalanceChurnQuotient:   32,
 	Gwei:                      1e9,
 	BeaconChainShardNumber:    1<<64 - 1,
 	MaxCasperVotes:            1024,
 	LatestBlockRootsLength:    8192,
 	LatestRandaoMixesLength:   8192,
 	LatestPenalizedExitLength: 8192,
+	MaxWithdrawalsPerEpoch:    4,
 
 	// Deposit contract constants.
 	DepositContractTreeDepth: 32,
@@ -115,7 +117,7 @@ var defaultBeaconConfig = &BeaconChainConfig{
 	EpochLength:                  64,
 	SeedLookahead:                64,
 	EntryExitDelay:               256,
-	PowReceiptRootVotingPeriod:   1024,
+	DepositRootVotingPeriod:      1024,
 
 	// Reward and penalty quotients constants.
 	BaseRewardQuotient:           1024,
@@ -144,12 +146,14 @@ var demoBeaconConfig = &BeaconChainConfig{
 	TargetCommitteeSize:       3,
 	EjectionBalance:           defaultBeaconConfig.EjectionBalance,
 	EjectionBalanceInGwei:     defaultBeaconConfig.EjectionBalanceInGwei,
+	MaxBalanceChurnQuotient:   defaultBeaconConfig.MaxBalanceChurnQuotient,
 	Gwei:                      defaultBeaconConfig.Gwei,
 	BeaconChainShardNumber:    defaultBeaconConfig.BeaconChainShardNumber,
 	MaxCasperVotes:            defaultBeaconConfig.MaxCasperVotes,
 	LatestBlockRootsLength:    defaultBeaconConfig.LatestBlockRootsLength,
 	LatestRandaoMixesLength:   defaultBeaconConfig.LatestRandaoMixesLength,
 	LatestPenalizedExitLength: defaultBeaconConfig.LatestPenalizedExitLength,
+	MaxWithdrawalsPerEpoch:    defaultBeaconConfig.MaxWithdrawalsPerEpoch,
 
 	// Deposit contract constants.
 	DepositContractTreeDepth: defaultBeaconConfig.DepositContractTreeDepth,
@@ -170,7 +174,7 @@ var demoBeaconConfig = &BeaconChainConfig{
 	EpochLength:                  defaultBeaconConfig.EpochLength,
 	SeedLookahead:                defaultBeaconConfig.SeedLookahead,
 	EntryExitDelay:               defaultBeaconConfig.EntryExitDelay,
-	PowReceiptRootVotingPeriod:   defaultBeaconConfig.PowReceiptRootVotingPeriod,
+	DepositRootVotingPeriod:      defaultBeaconConfig.DepositRootVotingPeriod,
 
 	// Reward and penalty quotients constants.
 	BaseRewardQuotient:           defaultBeaconConfig.BaseRewardQuotient,
@@ -191,7 +195,7 @@ var demoBeaconConfig = &BeaconChainConfig{
 	SyncPollingInterval:   2 * 4, // Query nodes over the network every 4 slots for sync status.
 	GenesisTime:           time.Now(),
 	MaxNumLog2Validators:  defaultBeaconConfig.MaxNumLog2Validators,
-	SimulatedBlockRandao:  [32]byte{'S', 'I', 'M', 'U', 'L', 'A', 'T', 'E', 'R'},
+	SimulatedBlockRandao:  [32]byte{'S', 'I', 'M', 'U', 'L', 'A', 'T', 'O', 'R'},
 }
 
 var defaultShardConfig = &ShardChainConfig{

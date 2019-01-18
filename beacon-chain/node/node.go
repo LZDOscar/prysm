@@ -24,13 +24,13 @@ import (
 	"github.com/prysmaticlabs/prysm/beacon-chain/simulator"
 	rbcsync "github.com/prysmaticlabs/prysm/beacon-chain/sync"
 	"github.com/prysmaticlabs/prysm/beacon-chain/utils"
-	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
 	"github.com/prysmaticlabs/prysm/shared"
 	"github.com/prysmaticlabs/prysm/shared/cmd"
 	"github.com/prysmaticlabs/prysm/shared/debug"
 	"github.com/prysmaticlabs/prysm/shared/p2p"
 	"github.com/prysmaticlabs/prysm/shared/params"
 	"github.com/prysmaticlabs/prysm/shared/prometheus"
+	"github.com/prysmaticlabs/prysm/shared/version"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
@@ -114,7 +114,9 @@ func NewBeaconNode(ctx *cli.Context) (*BeaconNode, error) {
 func (b *BeaconNode) Start() {
 	b.lock.Lock()
 
-	log.Info("Starting beacon node")
+	log.WithFields(logrus.Fields{
+		"version": version.GetVersion(),
+	}).Info("Starting beacon node")
 
 	b.services.StartAll()
 
@@ -157,10 +159,6 @@ func (b *BeaconNode) Close() {
 
 func (b *BeaconNode) startDB(ctx *cli.Context) error {
 	baseDir := ctx.GlobalString(cmd.DataDirFlag.Name)
-	var genesisJSON string
-	if ctx.GlobalIsSet(utils.GenesisJSON.Name) {
-		genesisJSON = ctx.GlobalString(utils.GenesisJSON.Name)
-	}
 
 	db, err := db.NewDB(path.Join(baseDir, beaconChainDBName))
 	if err != nil {
@@ -175,15 +173,7 @@ func (b *BeaconNode) startDB(ctx *cli.Context) error {
 	}
 	// Ensure that state has been initialized.
 	if beaconState == nil {
-		var genesisValidatorRegistry []*pb.ValidatorRecord
-		if genesisJSON != "" {
-			log.Infof("Initializing Crystallized State from %s", genesisJSON)
-			genesisValidatorRegistry, err = utils.InitialValidatorRegistryFromJSON(genesisJSON)
-			if err != nil {
-				return err
-			}
-		}
-		if err := db.InitializeState(genesisValidatorRegistry); err != nil {
+		if err := db.InitializeState(); err != nil {
 			return err
 		}
 	}
@@ -283,12 +273,12 @@ func (b *BeaconNode) registerPOWChainService(ctx *cli.Context) error {
 	powClient := ethclient.NewClient(rpcClient)
 
 	web3Service, err := powchain.NewWeb3Service(context.TODO(), &powchain.Web3ServiceConfig{
-		Endpoint: b.ctx.GlobalString(utils.Web3ProviderFlag.Name),
-		Pubkey:   b.ctx.GlobalString(utils.PubKeyFlag.Name),
-		VrcAddr:  common.HexToAddress(b.ctx.GlobalString(utils.VrcContractFlag.Name)),
-		Client:   powClient,
-		Reader:   powClient,
-		Logger:   powClient,
+		Endpoint:        b.ctx.GlobalString(utils.Web3ProviderFlag.Name),
+		DepositContract: common.HexToAddress(b.ctx.GlobalString(utils.VrcContractFlag.Name)),
+		Client:          powClient,
+		Reader:          powClient,
+		Logger:          powClient,
+		ContractBackend: powClient,
 	})
 	if err != nil {
 		return fmt.Errorf("could not register proof-of-work chain web3Service: %v", err)

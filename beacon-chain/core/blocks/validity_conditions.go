@@ -1,3 +1,6 @@
+// Package blocks contains block processing libraries. These libraries
+// process and verify block specific messages such as PoW receipt root,
+// RANDAO, validator deposits, exits and slashing proofs.
 package blocks
 
 import (
@@ -8,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	gethTypes "github.com/ethereum/go-ethereum/core/types"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
+	bytesutil "github.com/prysmaticlabs/prysm/shared/bytes"
 )
 
 // IsValidBlock ensures that the block is compliant with the block processing validity conditions.
@@ -28,8 +32,7 @@ func IsValidBlock(
 
 	// Pre-Processing Condition 1:
 	// Check that the parent Block has been processed and saved.
-	var parentRoot [32]byte
-	copy(parentRoot[:], block.ParentRootHash32)
+	parentRoot := bytesutil.ToBytes32(block.ParentRootHash32)
 	parentBlock := HasBlock(parentRoot)
 	if !parentBlock {
 		return fmt.Errorf("unprocessed parent block as it is not saved in the db: %#x", parentRoot)
@@ -44,7 +47,7 @@ func IsValidBlock(
 	}
 
 	if enablePOWChain {
-		h := common.BytesToHash(state.ProcessedPowReceiptRootHash32)
+		h := common.BytesToHash(state.LatestDepositRootHash32)
 		powBlock, err := GetPOWBlock(ctx, h)
 		if err != nil {
 			return fmt.Errorf("unable to retrieve POW chain reference block %v", err)
@@ -54,7 +57,7 @@ func IsValidBlock(
 		// The block pointed to by the state in state.processed_pow_receipt_root has
 		// been processed in the ETH 1.0 chain.
 		if powBlock == nil {
-			return fmt.Errorf("proof-of-Work chain reference in state does not exist %#x", state.ProcessedPowReceiptRootHash32)
+			return fmt.Errorf("proof-of-Work chain reference in state does not exist %#x", state.LatestDepositRootHash32)
 		}
 	}
 
