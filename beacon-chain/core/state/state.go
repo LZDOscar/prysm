@@ -31,6 +31,14 @@ func InitialBeaconState(
 		latestRandaoMixes[i] = params.BeaconConfig().ZeroHash[:]
 	}
 
+	latestIndexRoots := make(
+		[][]byte,
+		params.BeaconConfig().LatestIndexRootsLength,
+	)
+	for i := 0; i < len(latestIndexRoots); i++ {
+		latestIndexRoots[i] = params.BeaconConfig().ZeroHash[:]
+	}
+
 	latestVDFOutputs := make([][]byte,
 		params.BeaconConfig().LatestRandaoMixesLength/params.BeaconConfig().EpochLength)
 	for i := 0; i < len(latestVDFOutputs); i++ {
@@ -40,7 +48,7 @@ func InitialBeaconState(
 	latestCrosslinks := make([]*pb.CrosslinkRecord, params.BeaconConfig().ShardCount)
 	for i := 0; i < len(latestCrosslinks); i++ {
 		latestCrosslinks[i] = &pb.CrosslinkRecord{
-			Slot:                 params.BeaconConfig().GenesisSlot,
+			Epoch:                params.BeaconConfig().GenesisEpoch,
 			ShardBlockRootHash32: params.BeaconConfig().ZeroHash[:],
 		}
 	}
@@ -50,28 +58,20 @@ func InitialBeaconState(
 		latestBlockRoots[i] = params.BeaconConfig().ZeroHash[:]
 	}
 
-	validatorRegistry := make([]*pb.ValidatorRecord, len(initialValidatorDeposits))
+	validatorRegistry := make([]*pb.Validator, len(initialValidatorDeposits))
 	latestBalances := make([]uint64, len(initialValidatorDeposits))
 	for i, d := range initialValidatorDeposits {
-
-		amount, _, err := b.DecodeDepositAmountAndTimeStamp(d.DepositData)
-		if err != nil {
-			return nil, fmt.Errorf("could not decode deposit amount and timestamp %v", err)
-		}
-
 		depositInput, err := b.DecodeDepositInput(d.DepositData)
 		if err != nil {
 			return nil, fmt.Errorf("could decode deposit input %v", err)
 		}
 
-		validator := &pb.ValidatorRecord{
+		validator := &pb.Validator{
 			Pubkey:                      depositInput.Pubkey,
 			RandaoCommitmentHash32:      depositInput.RandaoCommitmentHash32,
 			WithdrawalCredentialsHash32: depositInput.WithdrawalCredentialsHash32,
-			CustodyCommitmentHash32:     depositInput.CustodyCommitmentHash32,
-			Balance:                     amount,
-			ExitSlot:                    params.BeaconConfig().FarFutureSlot,
-			PenalizedSlot:               params.BeaconConfig().FarFutureSlot,
+			ExitEpoch:                   params.BeaconConfig().FarFutureEpoch,
+			PenalizedEpoch:              params.BeaconConfig().FarFutureEpoch,
 		}
 
 		validatorRegistry[i] = validator
@@ -84,45 +84,46 @@ func InitialBeaconState(
 		// Misc fields.
 		Slot:        params.BeaconConfig().GenesisSlot,
 		GenesisTime: genesisTime,
-		ForkData: &pb.ForkData{
-			PreForkVersion:  params.BeaconConfig().GenesisForkVersion,
-			PostForkVersion: params.BeaconConfig().GenesisForkVersion,
-			ForkSlot:        params.BeaconConfig().GenesisSlot,
+		Fork: &pb.Fork{
+			PreviousVersion: params.BeaconConfig().GenesisForkVersion,
+			CurrentVersion:  params.BeaconConfig().GenesisForkVersion,
+			Epoch:           params.BeaconConfig().GenesisEpoch,
 		},
 
 		// Validator registry fields.
-		ValidatorRegistry:                    validatorRegistry,
-		ValidatorBalances:                    latestBalances,
-		ValidatorRegistryLatestChangeSlot:    params.BeaconConfig().GenesisSlot,
-		ValidatorRegistryExitCount:           0,
-		ValidatorRegistryDeltaChainTipHash32: params.BeaconConfig().ZeroHash[:],
+		ValidatorRegistry:            validatorRegistry,
+		ValidatorBalances:            latestBalances,
+		ValidatorRegistryUpdateEpoch: params.BeaconConfig().GenesisEpoch,
 
 		// Randomness and committees.
 		LatestRandaoMixesHash32S: latestRandaoMixes,
-		LatestVdfOutputsHash32S:  latestVDFOutputs,
-		ShardCommitteesAtSlots:   []*pb.ShardCommitteeArray{},
-
-		// Proof of custody.
-		// Place holder, proof of custody challenge is defined in phase 1.
-		// This list will remain empty through out phase 0.
-		CustodyChallenges: []*pb.CustodyChallenge{},
+		LatestIndexRootHash32S:   latestIndexRoots,
+		PreviousEpochStartShard:  params.BeaconConfig().GenesisStartShard,
+		CurrentEpochStartShard:   params.BeaconConfig().GenesisStartShard,
+		PreviousCalculationEpoch: params.BeaconConfig().GenesisEpoch,
+		CurrentCalculationEpoch:  params.BeaconConfig().GenesisEpoch,
+		PreviousEpochSeedHash32:  params.BeaconConfig().ZeroHash[:],
+		CurrentEpochSeedHash32:   params.BeaconConfig().ZeroHash[:],
 
 		// Finality.
-		PreviousJustifiedSlot: params.BeaconConfig().GenesisSlot,
-		JustifiedSlot:         params.BeaconConfig().GenesisSlot,
-		JustificationBitfield: 0,
-		FinalizedSlot:         params.BeaconConfig().GenesisSlot,
+		PreviousJustifiedEpoch: params.BeaconConfig().GenesisEpoch,
+		JustifiedEpoch:         params.BeaconConfig().GenesisEpoch,
+		JustificationBitfield:  0,
+		FinalizedEpoch:         params.BeaconConfig().GenesisEpoch,
 
 		// Recent state.
-		LatestCrosslinks:            latestCrosslinks,
-		LatestBlockRootHash32S:      latestBlockRoots,
-		LatestPenalizedExitBalances: latestPenalizedExitBalances,
-		LatestAttestations:          []*pb.PendingAttestationRecord{},
-		BatchedBlockRootHash32S:     [][]byte{},
+		LatestCrosslinks:        latestCrosslinks,
+		LatestBlockRootHash32S:  latestBlockRoots,
+		LatestPenalizedBalances: latestPenalizedExitBalances,
+		LatestAttestations:      []*pb.PendingAttestationRecord{},
+		BatchedBlockRootHash32S: [][]byte{},
 
-		// deposit root.
-		LatestDepositRootHash32: processedPowReceiptRoot,
-		DepositRootVotes:        []*pb.DepositRootVote{},
+		// Eth1 data.
+		LatestEth1Data: &pb.Eth1Data{
+			DepositRootHash32: processedPowReceiptRoot,
+			BlockHash32:       []byte{},
+		},
+		Eth1DataVotes: []*pb.Eth1DataVote{},
 	}
 
 	// Process initial deposits.
@@ -145,33 +146,20 @@ func InitialBeaconState(
 			depositInput.ProofOfPossession,
 			depositInput.WithdrawalCredentialsHash32,
 			depositInput.RandaoCommitmentHash32,
-			depositInput.CustodyCommitmentHash32,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("could not process validator deposit: %v", err)
 		}
 	}
 	for i := 0; i < len(state.ValidatorRegistry); i++ {
-		if v.EffectiveBalance(state, uint32(i)) ==
-			params.BeaconConfig().MaxDepositInGwei {
-			state, err = v.ActivateValidator(state, uint32(i), true)
+		if v.EffectiveBalance(state, uint64(i)) >=
+			params.BeaconConfig().MaxDeposit {
+			state, err = v.ActivateValidator(state, uint64(i), true)
 			if err != nil {
 				return nil, fmt.Errorf("could not activate validator: %v", err)
 			}
 		}
 	}
-
-	// Set initial committee shuffling.
-	initialShuffling, err := v.ShuffleValidatorRegistryToCommittees(
-		params.BeaconConfig().ZeroHash,
-		state.ValidatorRegistry,
-		0,
-		params.BeaconConfig().GenesisSlot,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("could not shuffle initial committee: %v", err)
-	}
-	state.ShardCommitteesAtSlots = append(initialShuffling, initialShuffling...)
 
 	return state, nil
 }

@@ -16,12 +16,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/prysmaticlabs/prysm/beacon-chain/core/state"
-
 	"github.com/gogo/protobuf/proto"
+	"github.com/prysmaticlabs/prysm/beacon-chain/core/state"
 	"github.com/prysmaticlabs/prysm/beacon-chain/db"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
-	bytesutil "github.com/prysmaticlabs/prysm/shared/bytes"
+	"github.com/prysmaticlabs/prysm/shared/bytesutil"
 	"github.com/prysmaticlabs/prysm/shared/event"
 	"github.com/prysmaticlabs/prysm/shared/hashutil"
 	"github.com/prysmaticlabs/prysm/shared/p2p"
@@ -216,14 +215,14 @@ func (s *InitialSync) run(delayChan <-chan time.Time) {
 
 			log.Debug("Successfully saved beacon state to the db")
 
-			if s.currentSlot >= beaconState.FinalizedSlot {
+			if s.currentSlot >= beaconState.FinalizedEpoch*params.BeaconConfig().EpochLength {
 				continue
 			}
 
 			// sets the current slot to the last finalized slot of the
 			// crystallized state to begin our sync from.
-			s.currentSlot = beaconState.FinalizedSlot
-			log.Debugf("Successfully saved crystallized state with the last finalized slot: %d", beaconState.FinalizedSlot)
+			s.currentSlot = beaconState.FinalizedEpoch * params.BeaconConfig().EpochLength
+			log.Debugf("Successfully saved crystallized state with the last finalized slot: %d", beaconState.FinalizedEpoch*params.BeaconConfig().EpochLength)
 
 			s.requestNextBlockBySlot(s.currentSlot + 1)
 			beaconStateSub.Unsubscribe()
@@ -419,12 +418,12 @@ func (s *InitialSync) checkBlockValidity(block *pb.BeaconBlock) error {
 		return errors.New("received a block that already exists. Exiting")
 	}
 
-	beaconState, err := s.db.GetState()
+	beaconState, err := s.db.State()
 	if err != nil {
 		return fmt.Errorf("failed to get beacon state: %v", err)
 	}
 
-	if block.Slot < beaconState.FinalizedSlot {
+	if block.Slot < beaconState.FinalizedEpoch*params.BeaconConfig().EpochLength {
 		return errors.New("discarding received block with a slot number smaller than the last finalized slot")
 	}
 	// Attestation from proposer not verified as, other nodes only store blocks not proposer

@@ -9,8 +9,8 @@ http_archive(
 
 http_archive(
     name = "io_bazel_rules_go",
-    url = "https://github.com/bazelbuild/rules_go/releases/download/0.16.5/rules_go-0.16.5.tar.gz",
-    sha256 = "7be7dc01f1e0afdba6c8eb2b43d2fa01c743be1b9273ab1eaf6c233df078d705",
+    url = "https://github.com/bazelbuild/rules_go/releases/download/0.17.0/rules_go-0.17.0.tar.gz",
+    sha256 = "492c3ac68ed9dcf527a07e6a1b2dcbf199c6bf8b35517951467ac32e421c06c1",
 )
 
 http_archive(
@@ -28,25 +28,30 @@ http_archive(
 
 http_archive(
     name = "io_bazel_rules_docker",
-    url = "https://github.com/bazelbuild/rules_docker/archive/v0.5.1.tar.gz",
-    strip_prefix = "rules_docker-0.5.1",
-    sha256 = "29d109605e0d6f9c892584f07275b8c9260803bf0c6fcb7de2623b2bedc910bd",
+    url = "https://github.com/bazelbuild/rules_docker/archive/v0.7.0.tar.gz",
+    strip_prefix = "rules_docker-0.7.0",
+    sha256 = "aed1c249d4ec8f703edddf35cbe9dfaca0b5f5ea6e4cd9e83e99f3b0d1136c3d",
 )
-
-load("@io_bazel_rules_docker//docker:docker.bzl", "docker_repositories")
-
-docker_repositories()
 
 http_archive(
     name = "build_bazel_rules_nodejs",
-    url = "https://github.com/bazelbuild/rules_nodejs/archive/0.16.2.tar.gz",
-    strip_prefix = "rules_nodejs-0.16.2",
-    sha256 = "5dea8b55e41caae044f4b1697f2bbf882d99563cf6c012929384063fddc801d4",
+    urls = ["https://github.com/bazelbuild/rules_nodejs/releases/download/0.18.1/rules_nodejs-0.18.1.tar.gz"],
+    sha256 = "04f91b18b1ea5ef589ecd5a820efc13581284f9b1062d9fcf6f8745794434a63",
 )
 
-load("@build_bazel_rules_nodejs//:package.bzl", "rules_nodejs_dependencies")
+http_archive(
+    name = "io_bazel_rules_k8s",
+    url = "https://github.com/bazelbuild/rules_k8s/archive/2206972072d64e5d2d966d81cc6c5fb77fd58dcb.tar.gz",
+    strip_prefix = "rules_k8s-2206972072d64e5d2d966d81cc6c5fb77fd58dcb",
+    sha256 = "828fb1ac4c44280be95306b885a326e40110eeba50bffa05e72ddd3b5cdc5d33",
+)
 
-rules_nodejs_dependencies()
+load(
+    "@io_bazel_rules_docker//repositories:repositories.bzl",
+    container_repositories = "repositories",
+)
+
+container_repositories()
 
 load("@build_bazel_rules_nodejs//:defs.bzl", "node_repositories", "yarn_install")
 
@@ -59,13 +64,6 @@ yarn_install(
 )
 
 # This requires rules_docker to be fully instantiated before it is pulled in.
-http_archive(
-    name = "io_bazel_rules_k8s",
-    url = "https://github.com/bazelbuild/rules_k8s/archive/2206972072d64e5d2d966d81cc6c5fb77fd58dcb.tar.gz",
-    strip_prefix = "rules_k8s-2206972072d64e5d2d966d81cc6c5fb77fd58dcb",
-    sha256 = "828fb1ac4c44280be95306b885a326e40110eeba50bffa05e72ddd3b5cdc5d33",
-)
-
 load("@io_bazel_rules_k8s//k8s:k8s.bzl", "k8s_repositories", "k8s_defaults")
 
 k8s_repositories()
@@ -88,7 +86,7 @@ k8s_repositories()
     "service_account",
 ]]
 
-load("@io_bazel_rules_go//go:def.bzl", "go_rules_dependencies", "go_register_toolchains")
+load("@io_bazel_rules_go//go:deps.bzl", "go_rules_dependencies", "go_register_toolchains")
 
 go_rules_dependencies()
 
@@ -118,7 +116,7 @@ http_archive(
 
 go_repository(
     name = "com_github_golang_mock",
-    commit = "8a44ef6e8be577e050008c7886f24fc705d709fb",
+    commit = "c20582278a829e4b3259747a3ce0eceb1763ee13",
     importpath = "github.com/golang/mock",
 )
 
@@ -134,7 +132,7 @@ go_repository(
     # code.
     remote = "https://github.com/prysmaticlabs/bazel-go-ethereum",
     vcs = "git",
-    commit = "6c700e8b788206dabf8577011cb0a338d6e88bde",
+    commit = "ec3d1d97a481e6cba542751a6defae7c76e322f1",
 )
 
 go_repository(
@@ -290,7 +288,7 @@ go_repository(
 
 go_repository(
     name = "com_github_mattn_go_colorable",
-    tag = "v0.0.9",
+    tag = "v0.1.0",
     importpath = "github.com/mattn/go-colorable",
 )
 
@@ -308,7 +306,7 @@ go_repository(
 
 go_repository(
     name = "com_github_minio_sha256_simd",
-    commit = "cc1980cb03383b1d46f518232672584432d7532d",
+    commit = "2d45a736cd16732fe6a57563cc20d8b035193e58",
     importpath = "github.com/minio/sha256-simd",
 )
 
@@ -453,7 +451,7 @@ go_repository(
 
 go_repository(
     name = "com_github_miekg_dns",
-    tag = "v1.1.3",
+    tag = "v1.1.4",
     importpath = "github.com/miekg/dns",
 )
 
@@ -501,13 +499,13 @@ go_repository(
 
 go_repository(
     name = "org_golang_x_sys",
-    commit = "11f53e03133963fb11ae0588e08b5e0b85be8be5",
+    commit = "41f3e6584952bb034a481797859f6ab34b6803bd",
     importpath = "golang.org/x/sys",
 )
 
 go_repository(
     name = "com_github_whyrusleeping_yamux",
-    tag = "v1.1.2",
+    tag = "v1.1.5",
     importpath = "github.com/whyrusleeping/yamux",
 )
 
@@ -543,7 +541,7 @@ go_repository(
 
 go_repository(
     name = "org_golang_x_crypto",
-    commit = "ff983b9c42bc9fbf91556e191cc8efb585c16908",
+    commit = "b8fe1690c61389d7d2a8074a507d1d40c5d30448",
     importpath = "golang.org/x/crypto",
 )
 
@@ -597,7 +595,7 @@ go_repository(
 
 go_repository(
     name = "com_github_syndtr_goleveldb",
-    commit = "b001fa50d6b27f3f0bb175a87d0cb55426d0a0ae",
+    commit = "2f17a3356c6616cbfc4ae4c38147dc062a68fb0e",
     importpath = "github.com/syndtr/goleveldb",
 )
 
@@ -615,7 +613,7 @@ go_repository(
 
 go_repository(
     name = "io_opencensus_go",
-    tag = "v0.18.0",
+    tag = "v0.19.0",
     importpath = "go.opencensus.io",
 )
 
@@ -645,7 +643,7 @@ go_repository(
 
 go_repository(
     name = "com_github_aristanetworks_goarista",
-    commit = "b7a59f2ffb2369336aaa78fc9a555e4fd277616b",
+    commit = "2166578f34481200ec14ddd6b9c4115db36c7b62",
     importpath = "github.com/aristanetworks/goarista",
 )
 
@@ -657,25 +655,25 @@ go_repository(
 
 go_repository(
     name = "com_github_prometheus_client_model",
-    commit = "56726106282f1985ea77d5305743db7231b0c0a8",
+    commit = "fd36f4220a901265f90734c3183c5f0c91daa0b8",
     importpath = "github.com/prometheus/client_model",
 )
 
 go_repository(
     name = "com_github_prometheus_common",
-    commit = "2998b132700a7d019ff618c06a234b47c1f3f681",
+    tag = "v0.2.0",
     importpath = "github.com/prometheus/common",
 )
 
 go_repository(
     name = "com_github_prometheus_procfs",
-    commit = "bf6a532e95b1f7a62adf0ab5050a5bb2237ad2f4",
+    commit = "488faf799f863e27e50c516468f76ae8f1da20a5",
     importpath = "github.com/prometheus/procfs",
 )
 
 go_repository(
     name = "com_github_prometheus_prometheus",
-    tag = "v2.6.1",
+    tag = "v2.7.1",
     importpath = "github.com/prometheus/prometheus",
 )
 
@@ -705,7 +703,7 @@ go_repository(
 
 go_repository(
     name = "com_github_libp2p_go_buffer_pool",
-    tag = "v0.1.1",
+    tag = "v0.1.3",
     importpath = "github.com/libp2p/go-buffer-pool",
 )
 
@@ -872,7 +870,7 @@ go_repository(
 
 go_repository(
     name = "com_github_shyiko_kubesec",
-    commit = "60b9dc76b678673960bc26619e5eca38dfaa1ad1",
+    commit = "7718facdb5e5529cecff1fe42fc3aaa4cc837d5d",
     importpath = "github.com/shyiko/kubesec",
 )
 
@@ -910,7 +908,7 @@ go_repository(
 
 go_repository(
     name = "org_golang_x_oauth2",
-    commit = "5dab4167f31cbd76b407f1486c86b40748bc5073",
+    commit = "99b60b757ec124ebb7d6b7e97f153b19c10ce163",
     importpath = "golang.org/x/oauth2",
 )
 
@@ -928,7 +926,7 @@ go_repository(
 
 go_repository(
     name = "com_google_cloud_go",
-    tag = "v0.34.0",
+    tag = "v0.36.0",
     importpath = "cloud.google.com/go",
 )
 
@@ -984,4 +982,10 @@ go_repository(
     name = "com_github_pkg_errors",
     tag = "v0.8.1",
     importpath = "github.com/pkg/errors",
+)
+
+go_repository(
+    name = "in_gopkg_natefinch_npipe_v2",
+    commit = "c1b8fa8bdccecb0b8db834ee0b92fdbcfa606dd6",
+    importpath = "gopkg.in/natefinch/npipe.v2",
 )

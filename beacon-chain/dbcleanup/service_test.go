@@ -3,7 +3,12 @@ package dbcleanup
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/prysmaticlabs/prysm/shared/params"
+
+	"github.com/prysmaticlabs/prysm/beacon-chain/core/blocks"
+	"github.com/prysmaticlabs/prysm/beacon-chain/core/validators"
 	"github.com/prysmaticlabs/prysm/beacon-chain/db"
 	"github.com/prysmaticlabs/prysm/beacon-chain/internal"
 	"github.com/prysmaticlabs/prysm/beacon-chain/utils"
@@ -26,6 +31,23 @@ func newMockChainService() *mockChainService {
 	return &mockChainService{
 		stateFeed: new(event.Feed),
 	}
+}
+
+func setupInitialDeposits(t *testing.T) []*pb.Deposit {
+	genesisValidatorRegistry := validators.InitialValidatorRegistry()
+	deposits := make([]*pb.Deposit, len(genesisValidatorRegistry))
+	for i := 0; i < len(deposits); i++ {
+		depositInput := &pb.DepositInput{
+			Pubkey: genesisValidatorRegistry[i].Pubkey,
+		}
+		balance := params.BeaconConfig().MaxDeposit
+		depositData, err := blocks.EncodeDepositData(depositInput, balance, time.Now().Unix())
+		if err != nil {
+			t.Fatalf("Cannot encode data: %v", err)
+		}
+		deposits[i] = &pb.Deposit{DepositData: depositData}
+	}
+	return deposits
 }
 
 func createCleanupService(beaconDB *db.BeaconDB) *CleanupService {
@@ -63,7 +85,9 @@ func TestCleanBlockVoteCache(t *testing.T) {
 	var err error
 
 	// Pre-fill block vote cache in DB
-	if err = beaconDB.InitializeState(); err != nil {
+	genesisTime := uint64(time.Now().Unix())
+	deposits := setupInitialDeposits(t)
+	if err = beaconDB.InitializeState(genesisTime, deposits); err != nil {
 		t.Fatalf("failed to initialize DB: %v", err)
 	}
 	oldBlock := &pb.BeaconBlock{Slot: 1}
@@ -96,8 +120,8 @@ func TestCleanBlockVoteCache(t *testing.T) {
 
 	// Now let the cleanup service do its job
 	cleanupService := createCleanupService(beaconDB)
-	state := &pb.BeaconState{FinalizedSlot: 1}
-	if err = cleanupService.cleanBlockVoteCache(state.FinalizedSlot); err != nil {
+	state := &pb.BeaconState{FinalizedEpoch: 1}
+	if err = cleanupService.cleanBlockVoteCache(state.FinalizedEpoch); err != nil {
 		t.Fatalf("failed to clean block vote cache")
 	}
 

@@ -10,10 +10,11 @@ import (
 	"github.com/prysmaticlabs/prysm/beacon-chain/core/state"
 	"github.com/prysmaticlabs/prysm/beacon-chain/internal"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
-	bytesutil "github.com/prysmaticlabs/prysm/shared/bytes"
+	"github.com/prysmaticlabs/prysm/shared/bytesutil"
 	"github.com/prysmaticlabs/prysm/shared/event"
 	"github.com/prysmaticlabs/prysm/shared/hashutil"
 	"github.com/prysmaticlabs/prysm/shared/p2p"
+	"github.com/prysmaticlabs/prysm/shared/params"
 	"github.com/prysmaticlabs/prysm/shared/testutil"
 	logTest "github.com/sirupsen/logrus/hooks/test"
 )
@@ -83,10 +84,13 @@ func TestSetBlockForInitialSync(t *testing.T) {
 	genericHash[0] = 'a'
 
 	block := &pb.BeaconBlock{
-		DepositRootHash32: []byte{1, 2, 3},
-		ParentRootHash32:  genericHash,
-		Slot:              uint64(1),
-		StateRootHash32:   genericHash,
+		Eth1Data: &pb.Eth1Data{
+			DepositRootHash32: []byte{1, 2, 3},
+			BlockHash32:       []byte{4, 5, 6},
+		},
+		ParentRootHash32: genericHash,
+		Slot:             uint64(1),
+		StateRootHash32:  genericHash,
 	}
 
 	blockResponse := &pb.BeaconBlockResponse{Block: block}
@@ -139,7 +143,7 @@ func TestSavingBlocksInSync(t *testing.T) {
 	genericHash[0] = 'a'
 
 	beaconState := &pb.BeaconState{
-		FinalizedSlot: 99,
+		FinalizedEpoch: 1,
 	}
 
 	stateResponse := &pb.BeaconStateResponse{
@@ -147,8 +151,8 @@ func TestSavingBlocksInSync(t *testing.T) {
 	}
 
 	incorrectState := &pb.BeaconState{
-		FinalizedSlot: 9,
-		JustifiedSlot: 20,
+		FinalizedEpoch: 0,
+		JustifiedEpoch: 1,
 	}
 
 	incorrectStateResponse := &pb.BeaconStateResponse{
@@ -163,10 +167,13 @@ func TestSavingBlocksInSync(t *testing.T) {
 
 	getBlockResponseMsg := func(Slot uint64) p2p.Message {
 		block := &pb.BeaconBlock{
-			DepositRootHash32: []byte{1, 2, 3},
-			ParentRootHash32:  genericHash,
-			Slot:              Slot,
-			StateRootHash32:   beaconStateRootHash32[:],
+			Eth1Data: &pb.Eth1Data{
+				DepositRootHash32: []byte{1, 2, 3},
+				BlockHash32:       []byte{4, 5, 6},
+			},
+			ParentRootHash32: genericHash,
+			Slot:             Slot,
+			StateRootHash32:  beaconStateRootHash32[:],
 		}
 
 		blockResponse := &pb.BeaconBlockResponse{
@@ -195,7 +202,7 @@ func TestSavingBlocksInSync(t *testing.T) {
 
 	ss.stateBuf <- msg2
 
-	if ss.currentSlot == incorrectStateResponse.BeaconState.FinalizedSlot {
+	if ss.currentSlot == incorrectStateResponse.BeaconState.FinalizedEpoch*params.BeaconConfig().EpochLength {
 		t.Fatalf("Beacon state updated incorrectly: %d", ss.currentSlot)
 	}
 
@@ -212,11 +219,11 @@ func TestSavingBlocksInSync(t *testing.T) {
 	msg1 = getBlockResponseMsg(30)
 	ss.blockBuf <- msg1
 
-	if stateResponse.BeaconState.FinalizedSlot != ss.currentSlot {
-		t.Fatalf("Slot saved when it was not supposed too: %v", stateResponse.BeaconState.FinalizedSlot)
+	if stateResponse.BeaconState.FinalizedEpoch*params.BeaconConfig().EpochLength != ss.currentSlot {
+		t.Fatalf("Slot saved when it was not supposed too: %v", stateResponse.BeaconState.FinalizedEpoch*params.BeaconConfig().EpochLength)
 	}
 
-	msg1 = getBlockResponseMsg(100)
+	msg1 = getBlockResponseMsg(65)
 	ss.blockBuf <- msg1
 
 	ss.cancel()
@@ -259,7 +266,7 @@ func TestDelayChan(t *testing.T) {
 	genericHash[0] = 'a'
 
 	beaconState := &pb.BeaconState{
-		FinalizedSlot: 99,
+		FinalizedEpoch: 1,
 	}
 
 	stateResponse := &pb.BeaconStateResponse{
@@ -273,10 +280,13 @@ func TestDelayChan(t *testing.T) {
 	beaconStateRootHash32 := hashutil.Hash(enc)
 
 	block := &pb.BeaconBlock{
-		DepositRootHash32: []byte{1, 2, 3},
-		ParentRootHash32:  genericHash,
-		Slot:              uint64(1),
-		StateRootHash32:   beaconStateRootHash32[:],
+		Eth1Data: &pb.Eth1Data{
+			DepositRootHash32: []byte{1, 2, 3},
+			BlockHash32:       []byte{4, 5, 6},
+		},
+		ParentRootHash32: genericHash,
+		Slot:             uint64(1),
+		StateRootHash32:  beaconStateRootHash32[:],
 	}
 
 	blockResponse := &pb.BeaconBlockResponse{
@@ -297,7 +307,7 @@ func TestDelayChan(t *testing.T) {
 
 	ss.stateBuf <- msg2
 
-	blockResponse.Block.Slot = 100
+	blockResponse.Block.Slot = 65
 	msg1.Data = blockResponse
 
 	ss.blockBuf <- msg1
@@ -353,10 +363,13 @@ func TestRequestBlocksBySlot(t *testing.T) {
 	getBlockResponseMsg := func(Slot uint64) (p2p.Message, [32]byte) {
 
 		block := &pb.BeaconBlock{
-			DepositRootHash32: []byte{1, 2, 3},
-			ParentRootHash32:  genericHash,
-			Slot:              Slot,
-			StateRootHash32:   nil,
+			Eth1Data: &pb.Eth1Data{
+				DepositRootHash32: []byte{1, 2, 3},
+				BlockHash32:       []byte{4, 5, 6},
+			},
+			ParentRootHash32: genericHash,
+			Slot:             Slot,
+			StateRootHash32:  nil,
 		}
 
 		blockResponse := &pb.BeaconBlockResponse{

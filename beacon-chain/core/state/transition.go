@@ -9,6 +9,7 @@ import (
 	bal "github.com/prysmaticlabs/prysm/beacon-chain/core/balances"
 	b "github.com/prysmaticlabs/prysm/beacon-chain/core/blocks"
 	e "github.com/prysmaticlabs/prysm/beacon-chain/core/epoch"
+	"github.com/prysmaticlabs/prysm/beacon-chain/core/helpers"
 	"github.com/prysmaticlabs/prysm/beacon-chain/core/randao"
 	v "github.com/prysmaticlabs/prysm/beacon-chain/core/validators"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
@@ -26,6 +27,7 @@ func ExecuteStateTransition(
 	beaconState *pb.BeaconState,
 	block *pb.BeaconBlock,
 	prevBlockRoot [32]byte,
+	verifySignatures bool,
 ) (*pb.BeaconState, error) {
 	var err error
 
@@ -39,7 +41,7 @@ func ExecuteStateTransition(
 	beaconState = randao.UpdateRandaoMixes(beaconState)
 	beaconState = b.ProcessBlockRoots(beaconState, prevBlockRoot)
 	if block != nil {
-		beaconState, err = ProcessBlock(beaconState, block)
+		beaconState, err = ProcessBlock(beaconState, block, verifySignatures)
 		if err != nil {
 			return nil, fmt.Errorf("unable to process block: %v", err)
 		}
@@ -58,7 +60,7 @@ func ExecuteStateTransition(
 // ProcessBlock creates a new, modified beacon state by applying block operation
 // transformations as defined in the Ethereum Serenity specification, including processing proposer slashings,
 // processing block attestations, and more.
-func ProcessBlock(state *pb.BeaconState, block *pb.BeaconBlock) (*pb.BeaconState, error) {
+func ProcessBlock(state *pb.BeaconState, block *pb.BeaconBlock, verifySignatures bool) (*pb.BeaconState, error) {
 	if block.Slot != state.Slot {
 		return nil, fmt.Errorf(
 			"block.slot != state.slot, block.slot = %d, state.slot = %d",
@@ -66,22 +68,27 @@ func ProcessBlock(state *pb.BeaconState, block *pb.BeaconBlock) (*pb.BeaconState
 			state.Slot,
 		)
 	}
-	// TODO(#781): Verify Proposer Signature.
+	if verifySignatures {
+		// TODO(#781): Verify Proposer Signature.
+		if err := b.VerifyProposerSignature(block); err != nil {
+			return nil, fmt.Errorf("could not verify proposer signature: %v", err)
+		}
+	}
 	var err error
-	state = b.ProcessDepositRoots(state, block)
 	state, err = b.ProcessBlockRandao(state, block)
 	if err != nil {
 		return nil, fmt.Errorf("could not verify and process block randao: %v", err)
 	}
-	state, err = b.ProcessProposerSlashings(state, block)
+	state, err = b.ProcessProposerSlashings(state, block, verifySignatures)
 	if err != nil {
 		return nil, fmt.Errorf("could not verify block proposer slashings: %v", err)
 	}
-	state, err = b.ProcessCasperSlashings(state, block)
+	state = b.ProcessEth1Data(state, block)
+	state, err = b.ProcessAttesterSlashings(state, block, verifySignatures)
 	if err != nil {
-		return nil, fmt.Errorf("could not verify block casper slashings: %v", err)
+		return nil, fmt.Errorf("could not verify block attester slashings: %v", err)
 	}
-	state, err = b.ProcessBlockAttestations(state, block)
+	state, err = b.ProcessBlockAttestations(state, block, verifySignatures)
 	if err != nil {
 		return nil, fmt.Errorf("could not process block attestations: %v", err)
 	}
@@ -89,7 +96,7 @@ func ProcessBlock(state *pb.BeaconState, block *pb.BeaconBlock) (*pb.BeaconState
 	if err != nil {
 		return nil, fmt.Errorf("could not process block validator deposits: %v", err)
 	}
-	state, err = b.ProcessValidatorExits(state, block)
+	state, err = b.ProcessValidatorExits(state, block, verifySignatures)
 	if err != nil {
 		return nil, fmt.Errorf("could not process validator exits: %v", err)
 	}
@@ -104,20 +111,20 @@ func ProcessBlock(state *pb.BeaconState, block *pb.BeaconBlock) (*pb.BeaconState
 // 	 update_justification(state)
 // 	 update_finalization(state)
 // 	 update_crosslinks(state)
-// 	 process_casper_reward_penalties(state)
+// 	 process_attester_reward_penalties(state)
 // 	 process_crosslink_reward_penalties(state)
 // 	 update_validator_registry(state)
 // 	 final_book_keeping(state)
 func ProcessEpoch(state *pb.BeaconState) (*pb.BeaconState, error) {
-
 	// Calculate total balances of active validators of the current state.
-	activeValidatorIndices := v.ActiveValidatorIndices(state.ValidatorRegistry, state.Slot)
+	currentEpoch := helpers.CurrentEpoch(state)
+	activeValidatorIndices := helpers.ActiveValidatorIndices(state.ValidatorRegistry, currentEpoch)
 	totalBalance := e.TotalBalance(state, activeValidatorIndices)
 
 	// Calculate the attesting balances of validators that justified the
 	// epoch boundary block at the start of the current epoch.
-	currentAttestations := e.Attestations(state)
-	currentBoundaryAttestations, err := e.BoundaryAttestations(state, currentAttestations)
+	currentAttestations := e.CurrentAttestations(state)
+	currentBoundaryAttestations, err := e.CurrentBoundaryAttestations(state, currentAttestations)
 	if err != nil {
 		return nil, fmt.Errorf("could not get current boundary attestations: %v", err)
 	}
@@ -170,9 +177,9 @@ func ProcessEpoch(state *pb.BeaconState) (*pb.BeaconState, error) {
 	}
 	prevHeadAttestingBalances := e.TotalBalance(state, prevHeadAttesterIndices)
 
-	// Process receipt roots.
-	if e.CanProcessDepositRoots(state) {
-		e.ProcessDeposits(state)
+	// Process eth1 data
+	if e.CanProcessEth1Data(state) {
+		state = e.ProcessEth1Data(state)
 	}
 
 	// Update justification.
@@ -194,7 +201,7 @@ func ProcessEpoch(state *pb.BeaconState) (*pb.BeaconState, error) {
 		return nil, fmt.Errorf("could not process crosslink records: %v", err)
 	}
 
-	// Process casper rewards and penalties.
+	// Process attester rewards and penalties.
 	epochsSinceFinality := e.SinceFinality(state)
 	switch {
 	case epochsSinceFinality <= 4:
@@ -290,22 +297,18 @@ func ProcessEpoch(state *pb.BeaconState) (*pb.BeaconState, error) {
 	}
 
 	// Process validator registry.
+	state = e.ProcessPrevSlotShardSeed(state)
+	state = v.ProcessPenaltiesAndExits(state)
 	if e.CanProcessValidatorRegistry(state) {
-		state = v.ProcessPenaltiesAndExits(state)
 		state, err = e.ProcessValidatorRegistry(state)
 		if err != nil {
 			return nil, fmt.Errorf("could not process validator registry: %v", err)
 		}
 	} else {
-		state = v.ProcessPenaltiesAndExits(state)
-		state, err = e.ProcessPartialValidatorRegistry(state)
-		if err != nil {
-			return nil, fmt.Errorf("could not process partial validator registry: %v", err)
-		}
+		state = e.ProcessPartialValidatorRegistry(state)
 	}
 
 	// Clean up processed attestations.
 	state = e.CleanupAttestations(state)
-
 	return state, nil
 }
