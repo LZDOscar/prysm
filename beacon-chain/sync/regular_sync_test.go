@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prysmaticlabs/prysm/shared/ssz"
+
 	"github.com/gogo/protobuf/proto"
 	"github.com/prysmaticlabs/prysm/beacon-chain/core/blocks"
 	"github.com/prysmaticlabs/prysm/beacon-chain/core/validators"
@@ -62,7 +64,7 @@ func setupInitialDeposits(t *testing.T) []*pb.Deposit {
 		depositInput := &pb.DepositInput{
 			Pubkey: genesisValidatorRegistry[i].Pubkey,
 		}
-		balance := params.BeaconConfig().MaxDeposit
+		balance := params.BeaconConfig().MaxDepositAmount
 		depositData, err := blocks.EncodeDepositData(depositInput, balance, time.Now().Unix())
 		if err != nil {
 			t.Fatalf("Cannot encode data: %v", err)
@@ -83,7 +85,7 @@ func setupService(t *testing.T, db *db.BeaconDB) *RegularSync {
 	return NewRegularSyncService(context.Background(), cfg)
 }
 
-func TestProcessBlockHash(t *testing.T) {
+func TestProcessBlockRoot(t *testing.T) {
 	hook := logTest.NewGlobal()
 
 	db := internal.SetupDB(t)
@@ -136,8 +138,6 @@ func TestProcessBlock(t *testing.T) {
 	for i := 0; i < len(validators); i++ {
 		validators[i] = &pb.Validator{
 			Pubkey: []byte(strconv.Itoa(i)),
-			RandaoCommitmentHash32: []byte{41, 13, 236, 217, 84, 139, 98, 168, 214, 3, 69,
-				169, 136, 56, 111, 200, 75, 166, 188, 149, 72, 64, 8, 246, 54, 47, 147, 22, 14, 243, 229, 99},
 		}
 	}
 	genesisTime := uint64(time.Now().Unix())
@@ -163,14 +163,14 @@ func TestProcessBlock(t *testing.T) {
 	}()
 
 	parentBlock := &pb.BeaconBlock{
-		Slot: 0,
+		Slot: params.BeaconConfig().GenesisSlot,
 	}
 	if err := db.SaveBlock(parentBlock); err != nil {
 		t.Fatalf("failed to save block: %v", err)
 	}
-	parentHash, err := hashutil.HashBeaconBlock(parentBlock)
+	parentRoot, err := ssz.TreeHash(parentBlock)
 	if err != nil {
-		t.Fatalf("failed to get parent hash: %v", err)
+		t.Fatalf("failed to get parent root: %v", err)
 	}
 
 	data := &pb.BeaconBlock{
@@ -178,8 +178,8 @@ func TestProcessBlock(t *testing.T) {
 			DepositRootHash32: []byte{1, 2, 3, 4, 5},
 			BlockHash32:       []byte{6, 7, 8, 9, 10},
 		},
-		ParentRootHash32: parentHash[:],
-		Slot:             1,
+		ParentRootHash32: parentRoot[:],
+		Slot:             params.BeaconConfig().GenesisSlot,
 	}
 	attestation := &pb.Attestation{
 		Data: &pb.AttestationData{
@@ -218,8 +218,6 @@ func TestProcessMultipleBlocks(t *testing.T) {
 	for i := 0; i < len(validators); i++ {
 		validators[i] = &pb.Validator{
 			Pubkey: []byte(strconv.Itoa(i)),
-			RandaoCommitmentHash32: []byte{41, 13, 236, 217, 84, 139, 98, 168, 214, 3, 69,
-				169, 136, 56, 111, 200, 75, 166, 188, 149, 72, 64, 8, 246, 54, 47, 147, 22, 14, 243, 229, 99},
 		}
 	}
 	genesisTime := uint64(time.Now().Unix())
@@ -246,14 +244,14 @@ func TestProcessMultipleBlocks(t *testing.T) {
 	}()
 
 	parentBlock := &pb.BeaconBlock{
-		Slot: 0,
+		Slot: params.BeaconConfig().GenesisSlot,
 	}
 	if err := db.SaveBlock(parentBlock); err != nil {
 		t.Fatalf("failed to save block: %v", err)
 	}
-	parentHash, err := hashutil.HashBeaconBlock(parentBlock)
+	parentRoot, err := ssz.TreeHash(parentBlock)
 	if err != nil {
-		t.Fatalf("failed to get parent hash: %v", err)
+		t.Fatalf("failed to get parent root: %v", err)
 	}
 
 	data1 := &pb.BeaconBlock{
@@ -261,8 +259,8 @@ func TestProcessMultipleBlocks(t *testing.T) {
 			DepositRootHash32: []byte{1, 2, 3, 4, 5},
 			BlockHash32:       []byte{6, 7, 8, 9, 10},
 		},
-		ParentRootHash32: parentHash[:],
-		Slot:             1,
+		ParentRootHash32: parentRoot[:],
+		Slot:             params.BeaconConfig().GenesisSlot + 1,
 	}
 
 	responseBlock1 := &pb.BeaconBlockResponse{
@@ -270,8 +268,7 @@ func TestProcessMultipleBlocks(t *testing.T) {
 		Attestation: &pb.Attestation{
 			Data: &pb.AttestationData{
 				ShardBlockRootHash32: []byte{},
-				Slot:                 0,
-				JustifiedSlot:        0,
+				Slot:                 params.BeaconConfig().GenesisSlot,
 			},
 		},
 	}
@@ -297,7 +294,6 @@ func TestProcessMultipleBlocks(t *testing.T) {
 			Data: &pb.AttestationData{
 				ShardBlockRootHash32: []byte{},
 				Slot:                 0,
-				JustifiedSlot:        0,
 			},
 		},
 	}
@@ -443,7 +439,7 @@ func TestReceiveExitReq_Ok(t *testing.T) {
 	}()
 
 	request1 := &pb.Exit{
-		Slot: 100,
+		Epoch: 100,
 	}
 
 	msg1 := p2p.Message{

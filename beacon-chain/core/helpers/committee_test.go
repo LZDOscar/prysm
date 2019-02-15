@@ -44,6 +44,23 @@ func TestEpochCommitteeCount_Ok(t *testing.T) {
 		}
 	}
 }
+
+func TestEpochCommitteeCount_LessShardsThanEpoch(t *testing.T) {
+	validatorCount := uint64(8)
+	productionConfig := params.BeaconConfig()
+	testConfig := &params.BeaconChainConfig{
+		ShardCount:          1,
+		EpochLength:         4,
+		TargetCommitteeSize: 2,
+	}
+	params.OverrideBeaconConfig(testConfig)
+	if EpochCommitteeCount(validatorCount) != validatorCount/testConfig.TargetCommitteeSize {
+		t.Errorf("wanted: %d, got: %d",
+			validatorCount/testConfig.TargetCommitteeSize, EpochCommitteeCount(validatorCount))
+	}
+	params.OverrideBeaconConfig(productionConfig)
+}
+
 func TestCurrentEpochCommitteeCount_Ok(t *testing.T) {
 	validatorsPerEpoch := params.BeaconConfig().EpochLength * params.BeaconConfig().TargetCommitteeSize
 	committeesPerEpoch := uint64(8)
@@ -240,36 +257,36 @@ func TestAttestationParticipants_ok(t *testing.T) {
 			attestationSlot: 2,
 			stateSlot:       5,
 			shard:           2,
-			bitfield:        []byte{0xFF},
+			bitfield:        []byte{0xC0},
 			wanted:          []uint64{11, 121},
 		},
 		{
 			attestationSlot: 1,
 			stateSlot:       10,
 			shard:           1,
-			bitfield:        []byte{77},
-			wanted:          []uint64{117},
+			bitfield:        []byte{0x80},
+			wanted:          []uint64{4},
 		},
 		{
 			attestationSlot: 10,
 			stateSlot:       20,
 			shard:           10,
-			bitfield:        []byte{0xFF},
+			bitfield:        []byte{0xC0},
 			wanted:          []uint64{14, 30},
 		},
 		{
 			attestationSlot: 64,
 			stateSlot:       100,
 			shard:           0,
-			bitfield:        []byte{0xFF},
+			bitfield:        []byte{0xC0},
 			wanted:          []uint64{109, 97},
 		},
 		{
 			attestationSlot: 999,
 			stateSlot:       1000,
 			shard:           39,
-			bitfield:        []byte{99},
-			wanted:          []uint64{89},
+			bitfield:        []byte{0x80},
+			wanted:          []uint64{6},
 		},
 	}
 
@@ -312,5 +329,133 @@ func TestAttestationParticipants_IncorrectBitfield(t *testing.T) {
 
 	if _, err := AttestationParticipants(state, attestationData, []byte{}); err == nil {
 		t.Error("attestation participants should have failed with incorrect bitfield")
+	}
+}
+
+func TestVerifyBitfield(t *testing.T) {
+	bitfield := []byte{0xff}
+	committeeSize := 8
+
+	isValidated, err := VerifyBitfield(bitfield, committeeSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !isValidated {
+		t.Error("bitfield is not validated when it was supposed to be")
+	}
+
+	// The second byte is represented as 01000000 , however we could only represent numbers as big endian
+	// so the bitwise operation is used here.
+	bitfield = []byte{0xff, 0xbf ^ 0xff}
+	committeeSize = 9
+
+	isValidated, err = VerifyBitfield(bitfield, committeeSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if isValidated {
+		t.Error("bitfield is validated when it was supposed to be")
+	}
+
+	committeeSize = 10
+
+	isValidated, err = VerifyBitfield(bitfield, committeeSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !isValidated {
+		t.Error("bitfield is not validated when it was supposed to be")
+	}
+}
+func TestNextEpochCommitteeAssignment_ok(t *testing.T) {
+	// Initialize test with 128 validators, each slot and each shard gets 2 validators.
+	validators := make([]*pb.Validator, 2*params.BeaconConfig().EpochLength)
+	for i := 0; i < len(validators); i++ {
+		validators[i] = &pb.Validator{
+			ExitEpoch: params.BeaconConfig().FarFutureEpoch,
+		}
+	}
+	state := &pb.BeaconState{
+		ValidatorRegistry: validators,
+		Slot:              params.BeaconConfig().EpochLength,
+	}
+
+	tests := []struct {
+		index      uint64
+		slot       uint64
+		committee  []uint64
+		shard      uint64
+		isProposer bool
+	}{
+		{
+			index:      0,
+			slot:       146,
+			committee:  []uint64{105, 0},
+			shard:      18,
+			isProposer: false,
+		},
+		{
+			index:      105,
+			slot:       146,
+			committee:  []uint64{105, 0},
+			shard:      18,
+			isProposer: true,
+		},
+		{
+			index:      64,
+			slot:       139,
+			committee:  []uint64{64, 52},
+			shard:      11,
+			isProposer: false,
+		},
+		{
+			index:      11,
+			slot:       130,
+			committee:  []uint64{11, 121},
+			shard:      2,
+			isProposer: true,
+		},
+	}
+
+	for _, tt := range tests {
+		committee, shard, slot, isProposer, err := NextEpochCommitteeAssignment(
+			state, tt.index, false)
+		if err != nil {
+			t.Fatalf("failed to execute NextEpochCommitteeAssignment: %v", err)
+		}
+		if shard != tt.shard {
+			t.Errorf("wanted shard %d, got shard %d",
+				tt.shard, shard)
+		}
+		if slot != tt.slot {
+			t.Errorf("wanted slot %d, got slot %d",
+				tt.slot, slot)
+		}
+		if isProposer != tt.isProposer {
+			t.Errorf("wanted isProposer %v, got isProposer %v",
+				tt.isProposer, isProposer)
+		}
+		if !reflect.DeepEqual(committee, tt.committee) {
+			t.Errorf("wanted committee %v, got committee %v",
+				tt.committee, committee)
+		}
+	}
+}
+
+func TestNextEpochCommitteeAssignment_CantFindValidator(t *testing.T) {
+	state := &pb.BeaconState{
+		Slot: params.BeaconConfig().EpochLength,
+	}
+	index := uint64(10000)
+	want := fmt.Sprintf(
+		"could not get assignment validator %d",
+		index,
+	)
+	if _, _, _, _, err := NextEpochCommitteeAssignment(
+		state, index, false); !strings.Contains(err.Error(), want) {
+		t.Errorf("Expected %s, received %v", want, err)
 	}
 }

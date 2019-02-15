@@ -43,8 +43,12 @@ func (vs *ValidatorServer) ValidatorEpochAssignments(
 	ctx context.Context,
 	req *pb.ValidatorEpochAssignmentsRequest,
 ) (*pb.ValidatorEpochAssignmentsResponse, error) {
-	if len(req.PublicKey) != 48 {
-		return nil, fmt.Errorf("expected 48 byte public key, received %d", len(req.PublicKey))
+	if len(req.PublicKey) != params.BeaconConfig().BLSPubkeyLength {
+		return nil, fmt.Errorf(
+			"expected public key to have length %d, received %d",
+			params.BeaconConfig().BLSPubkeyLength,
+			len(req.PublicKey),
+		)
 	}
 	beaconState, err := vs.beaconDB.State()
 	if err != nil {
@@ -63,7 +67,7 @@ func (vs *ValidatorServer) ValidatorEpochAssignments(
 		if err != nil {
 			return nil, err
 		}
-		proposerIndex, err := v.BeaconProposerIdx(beaconState, slot)
+		proposerIndex, err := helpers.BeaconProposerIndex(beaconState, slot)
 		if err != nil {
 			return nil, err
 		}
@@ -86,5 +90,39 @@ func (vs *ValidatorServer) ValidatorEpochAssignments(
 			AttesterSlot: attesterSlot,
 			ProposerSlot: proposerSlot,
 		},
+	}, nil
+}
+
+// ValidatorCommitteeAtSlot gets the committee at a certain slot where a validator's index is contained.
+func (vs *ValidatorServer) ValidatorCommitteeAtSlot(ctx context.Context, req *pb.CommitteeRequest) (*pb.CommitteeResponse, error) {
+	beaconState, err := vs.beaconDB.State()
+	if err != nil {
+		return nil, fmt.Errorf("could not fetch beacon state: %v", err)
+	}
+	crossLinkCommittees, err := helpers.CrosslinkCommitteesAtSlot(beaconState, req.Slot, false /* registry change */)
+	if err != nil {
+		return nil, fmt.Errorf("could not get crosslink committees at slot %d: %v", req.Slot, err)
+	}
+	var committee []uint64
+	var shard uint64
+	var indexFound bool
+	for _, com := range crossLinkCommittees {
+		for _, i := range com.Committee {
+			if i == req.ValidatorIndex {
+				committee = com.Committee
+				shard = com.Shard
+				indexFound = true
+				break
+			}
+		}
+		// Do not keep iterating over committees once the validator's
+		// index has been found in the inner for loop.
+		if indexFound {
+			break
+		}
+	}
+	return &pb.CommitteeResponse{
+		Committee: committee,
+		Shard:     shard,
 	}, nil
 }

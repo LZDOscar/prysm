@@ -37,6 +37,7 @@ func setup(t *testing.T) (*validator, *mocks, func()) {
 		beaconClient:    m.beaconClient,
 		attesterClient:  m.attesterClient,
 		validatorClient: m.validatorClient,
+		key:             validatorKey,
 	}
 
 	return validator, m, ctrl.Finish

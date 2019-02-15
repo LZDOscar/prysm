@@ -4,15 +4,15 @@
 package state
 
 import (
-	"encoding/binary"
 	"fmt"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/prysmaticlabs/prysm/beacon-chain/core/helpers"
+	"github.com/prysmaticlabs/prysm/shared/ssz"
+
 	b "github.com/prysmaticlabs/prysm/beacon-chain/core/blocks"
 	"github.com/prysmaticlabs/prysm/beacon-chain/core/state/stateutils"
 	v "github.com/prysmaticlabs/prysm/beacon-chain/core/validators"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
-	"github.com/prysmaticlabs/prysm/shared/hashutil"
 	"github.com/prysmaticlabs/prysm/shared/params"
 )
 
@@ -45,9 +45,9 @@ func InitialBeaconState(
 		latestVDFOutputs[i] = params.BeaconConfig().ZeroHash[:]
 	}
 
-	latestCrosslinks := make([]*pb.CrosslinkRecord, params.BeaconConfig().ShardCount)
+	latestCrosslinks := make([]*pb.Crosslink, params.BeaconConfig().ShardCount)
 	for i := 0; i < len(latestCrosslinks); i++ {
-		latestCrosslinks[i] = &pb.CrosslinkRecord{
+		latestCrosslinks[i] = &pb.Crosslink{
 			Epoch:                params.BeaconConfig().GenesisEpoch,
 			ShardBlockRootHash32: params.BeaconConfig().ZeroHash[:],
 		}
@@ -68,7 +68,6 @@ func InitialBeaconState(
 
 		validator := &pb.Validator{
 			Pubkey:                      depositInput.Pubkey,
-			RandaoCommitmentHash32:      depositInput.RandaoCommitmentHash32,
 			WithdrawalCredentialsHash32: depositInput.WithdrawalCredentialsHash32,
 			ExitEpoch:                   params.BeaconConfig().FarFutureEpoch,
 			PenalizedEpoch:              params.BeaconConfig().FarFutureEpoch,
@@ -97,7 +96,6 @@ func InitialBeaconState(
 
 		// Randomness and committees.
 		LatestRandaoMixesHash32S: latestRandaoMixes,
-		LatestIndexRootHash32S:   latestIndexRoots,
 		PreviousEpochStartShard:  params.BeaconConfig().GenesisStartShard,
 		CurrentEpochStartShard:   params.BeaconConfig().GenesisStartShard,
 		PreviousCalculationEpoch: params.BeaconConfig().GenesisEpoch,
@@ -114,8 +112,9 @@ func InitialBeaconState(
 		// Recent state.
 		LatestCrosslinks:        latestCrosslinks,
 		LatestBlockRootHash32S:  latestBlockRoots,
+		LatestIndexRootHash32S:  latestIndexRoots,
 		LatestPenalizedBalances: latestPenalizedExitBalances,
-		LatestAttestations:      []*pb.PendingAttestationRecord{},
+		LatestAttestations:      []*pb.PendingAttestation{},
 		BatchedBlockRootHash32S: [][]byte{},
 
 		// Eth1 data.
@@ -135,40 +134,43 @@ func InitialBeaconState(
 		if err != nil {
 			return nil, fmt.Errorf("could not decode deposit input: %v", err)
 		}
-		// depositData consists of depositInput []byte + depositValue [8]byte +
-		// depositTimestamp [8]byte.
-		depositValue := depositData[len(depositData)-16 : len(depositData)-8]
+		value, _, err := b.DecodeDepositAmountAndTimeStamp(depositData)
+		if err != nil {
+			return nil, fmt.Errorf("could not decode deposit value and timestamp: %v", err)
+		}
 		state, err = v.ProcessDeposit(
 			state,
 			validatorMap,
 			depositInput.Pubkey,
-			binary.BigEndian.Uint64(depositValue),
+			value,
 			depositInput.ProofOfPossession,
 			depositInput.WithdrawalCredentialsHash32,
-			depositInput.RandaoCommitmentHash32,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("could not process validator deposit: %v", err)
 		}
 	}
 	for i := 0; i < len(state.ValidatorRegistry); i++ {
-		if v.EffectiveBalance(state, uint64(i)) >=
-			params.BeaconConfig().MaxDeposit {
+		if helpers.EffectiveBalance(state, uint64(i)) >=
+			params.BeaconConfig().MaxDepositAmount {
 			state, err = v.ActivateValidator(state, uint64(i), true)
 			if err != nil {
 				return nil, fmt.Errorf("could not activate validator: %v", err)
 			}
 		}
 	}
-
-	return state, nil
-}
-
-// Hash the beacon state data structure.
-func Hash(state *pb.BeaconState) ([32]byte, error) {
-	data, err := proto.Marshal(state)
+	activeValidators := helpers.ActiveValidatorIndices(state.ValidatorRegistry, params.BeaconConfig().GenesisEpoch)
+	genesisActiveIndexRoot, err := ssz.TreeHash(activeValidators)
 	if err != nil {
-		return [32]byte{}, fmt.Errorf("could not marshal beacon state: %v", err)
+		return nil, fmt.Errorf("could not determine genesis active index root: %v", err)
 	}
-	return hashutil.Hash(data), nil
+	for i := uint64(0); i < params.BeaconConfig().LatestIndexRootsLength; i++ {
+		state.LatestIndexRootHash32S[i] = genesisActiveIndexRoot[:]
+	}
+	seed, err := helpers.GenerateSeed(state, params.BeaconConfig().GenesisEpoch)
+	if err != nil {
+		return nil, fmt.Errorf("could not generate initial seed: %v", err)
+	}
+	state.CurrentEpochSeedHash32 = seed[:]
+	return state, nil
 }

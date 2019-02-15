@@ -14,7 +14,6 @@ import (
 	"github.com/prysmaticlabs/prysm/beacon-chain/core/validators"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
 	b "github.com/prysmaticlabs/prysm/shared/bytesutil"
-	"github.com/prysmaticlabs/prysm/shared/params"
 )
 
 // CurrentAttestations returns the pending attestations from current epoch.
@@ -25,8 +24,8 @@ import (
 //  (Note: this is the set of attestations of slots in the epoch
 //  current_epoch, not attestations that got included in the chain
 //  during the epoch current_epoch.)
-func CurrentAttestations(state *pb.BeaconState) []*pb.PendingAttestationRecord {
-	var currentEpochAttestations []*pb.PendingAttestationRecord
+func CurrentAttestations(state *pb.BeaconState) []*pb.PendingAttestation {
+	var currentEpochAttestations []*pb.PendingAttestation
 	currentEpoch := helpers.CurrentEpoch(state)
 
 	for _, attestation := range state.LatestAttestations {
@@ -46,10 +45,10 @@ func CurrentAttestations(state *pb.BeaconState) []*pb.PendingAttestationRecord {
 //   	a.data.justified_epoch == state.justified_epoch].
 func CurrentBoundaryAttestations(
 	state *pb.BeaconState,
-	currentEpochAttestations []*pb.PendingAttestationRecord,
-) ([]*pb.PendingAttestationRecord, error) {
+	currentEpochAttestations []*pb.PendingAttestation,
+) ([]*pb.PendingAttestation, error) {
 	var boundarySlot uint64
-	var boundaryAttestations []*pb.PendingAttestationRecord
+	var boundaryAttestations []*pb.PendingAttestation
 
 	for _, attestation := range currentEpochAttestations {
 		boundaryBlockRoot, err := block.BlockRoot(state, boundarySlot)
@@ -73,8 +72,8 @@ func CurrentBoundaryAttestations(
 // Spec pseudocode definition:
 //   return [a for a in state.latest_attestations if
 //   	previous_epoch == slot_to_epoch(a.data.slot)].
-func PrevAttestations(state *pb.BeaconState) []*pb.PendingAttestationRecord {
-	var prevEpochAttestations []*pb.PendingAttestationRecord
+func PrevAttestations(state *pb.BeaconState) []*pb.PendingAttestation {
+	var prevEpochAttestations []*pb.PendingAttestation
 	prevEpoch := helpers.PrevEpoch(state)
 
 	for _, attestation := range state.LatestAttestations {
@@ -94,11 +93,11 @@ func PrevAttestations(state *pb.BeaconState) []*pb.PendingAttestationRecord {
 //   if a.data.justified_epoch  == state.previous_justified_epoch]
 func PrevJustifiedAttestations(
 	state *pb.BeaconState,
-	currentEpochAttestations []*pb.PendingAttestationRecord,
-	prevEpochAttestations []*pb.PendingAttestationRecord,
-) []*pb.PendingAttestationRecord {
+	currentEpochAttestations []*pb.PendingAttestation,
+	prevEpochAttestations []*pb.PendingAttestation,
+) []*pb.PendingAttestation {
 
-	var prevJustifiedAttestations []*pb.PendingAttestationRecord
+	var prevJustifiedAttestations []*pb.PendingAttestation
 	epochAttestations := append(currentEpochAttestations, prevEpochAttestations...)
 
 	for _, attestation := range epochAttestations {
@@ -114,26 +113,20 @@ func PrevJustifiedAttestations(
 //
 // Spec pseudocode definition:
 //   return [a for a in previous_epoch_justified_attestations
-// 	 if a.epoch_boundary_root == get_block_root(state, state.slot - 2 * EPOCH_LENGTH)]
+// 	 if a.epoch_boundary_root == get_block_root(state, get_epoch_start_slot(previous_epoch)]
 func PrevBoundaryAttestations(
 	state *pb.BeaconState,
-	prevEpochJustifiedAttestations []*pb.PendingAttestationRecord,
-) ([]*pb.PendingAttestationRecord, error) {
-	var earliestSlot uint64
+	prevEpochJustifiedAttestations []*pb.PendingAttestation,
+) ([]*pb.PendingAttestation, error) {
 
-	// If the state slot is less than 2 * epochLength, then the earliestSlot would
-	// result in a negative number. Therefore we should default to
-	// earliestSlot = 0 in this case.
-	if state.Slot > 2*params.BeaconConfig().EpochLength {
-		earliestSlot = state.Slot - 2*params.BeaconConfig().EpochLength
-	}
+	var prevBoundaryAttestations []*pb.PendingAttestation
 
-	var prevBoundaryAttestations []*pb.PendingAttestationRecord
 	prevBoundaryBlockRoot, err := block.BlockRoot(state,
-		earliestSlot)
+		helpers.StartSlot(helpers.PrevEpoch(state)))
 	if err != nil {
 		return nil, err
 	}
+
 	for _, attestation := range prevEpochJustifiedAttestations {
 		if bytes.Equal(attestation.Data.EpochBoundaryRootHash32, prevBoundaryBlockRoot) {
 			prevBoundaryAttestations = append(prevBoundaryAttestations, attestation)
@@ -150,10 +143,10 @@ func PrevBoundaryAttestations(
 //   if a.beacon_block_root == get_block_root(state, a.slot)]
 func PrevHeadAttestations(
 	state *pb.BeaconState,
-	prevEpochAttestations []*pb.PendingAttestationRecord,
-) ([]*pb.PendingAttestationRecord, error) {
+	prevEpochAttestations []*pb.PendingAttestation,
+) ([]*pb.PendingAttestation, error) {
 
-	var headAttestations []*pb.PendingAttestationRecord
+	var headAttestations []*pb.PendingAttestation
 	for _, attestation := range prevEpochAttestations {
 		canonicalBlockRoot, err := block.BlockRoot(state, attestation.Data.Slot)
 		if err != nil {
@@ -180,7 +173,7 @@ func TotalBalance(
 
 	var totalBalance uint64
 	for _, index := range activeValidatorIndices {
-		totalBalance += validators.EffectiveBalance(state, index)
+		totalBalance += helpers.EffectiveBalance(state, index)
 	}
 
 	return totalBalance
@@ -204,8 +197,8 @@ func InclusionSlot(state *pb.BeaconState, validatorIndex uint64) (uint64, error)
 		}
 		for _, index := range participatedValidators {
 			if index == validatorIndex {
-				if attestation.SlotIncluded < lowestSlotIncluded {
-					lowestSlotIncluded = attestation.SlotIncluded
+				if attestation.InclusionSlot < lowestSlotIncluded {
+					lowestSlotIncluded = attestation.InclusionSlot
 				}
 			}
 		}
@@ -232,7 +225,7 @@ func InclusionDistance(state *pb.BeaconState, validatorIndex uint64) (uint64, er
 		}
 		for _, index := range participatedValidators {
 			if index == validatorIndex {
-				return attestation.SlotIncluded - attestation.Data.Slot, nil
+				return attestation.InclusionSlot - attestation.Data.Slot, nil
 			}
 		}
 	}
@@ -246,8 +239,8 @@ func InclusionDistance(state *pb.BeaconState, validatorIndex uint64) (uint64, er
 //    `attesting_validator_indices(shard_committee, winning_root(shard_committee))` for convenience
 func AttestingValidators(
 	state *pb.BeaconState,
-	shard uint64, currentEpochAttestations []*pb.PendingAttestationRecord,
-	prevEpochAttestations []*pb.PendingAttestationRecord) ([]uint64, error) {
+	shard uint64, currentEpochAttestations []*pb.PendingAttestation,
+	prevEpochAttestations []*pb.PendingAttestation) ([]uint64, error) {
 
 	root, err := winningRoot(
 		state,
@@ -280,8 +273,8 @@ func AttestingValidators(
 func TotalAttestingBalance(
 	state *pb.BeaconState,
 	shard uint64,
-	currentEpochAttestations []*pb.PendingAttestationRecord,
-	prevEpochAttestations []*pb.PendingAttestationRecord) (uint64, error) {
+	currentEpochAttestations []*pb.PendingAttestation,
+	prevEpochAttestations []*pb.PendingAttestation) (uint64, error) {
 
 	var totalBalance uint64
 	attestedValidatorIndices, err := AttestingValidators(state, shard, currentEpochAttestations, prevEpochAttestations)
@@ -290,7 +283,7 @@ func TotalAttestingBalance(
 	}
 
 	for _, index := range attestedValidatorIndices {
-		totalBalance += validators.EffectiveBalance(state, index)
+		totalBalance += helpers.EffectiveBalance(state, index)
 	}
 
 	return totalBalance, nil
@@ -316,8 +309,8 @@ func SinceFinality(state *pb.BeaconState) uint64 {
 func winningRoot(
 	state *pb.BeaconState,
 	shard uint64,
-	currentEpochAttestations []*pb.PendingAttestationRecord,
-	prevEpochAttestations []*pb.PendingAttestationRecord) ([]byte, error) {
+	currentEpochAttestations []*pb.PendingAttestation,
+	prevEpochAttestations []*pb.PendingAttestation) ([]byte, error) {
 
 	var winnerBalance uint64
 	var winnerRoot []byte
@@ -343,7 +336,7 @@ func winningRoot(
 
 		var rootBalance uint64
 		for _, index := range indices {
-			rootBalance += validators.EffectiveBalance(state, index)
+			rootBalance += helpers.EffectiveBalance(state, index)
 		}
 
 		if rootBalance > winnerBalance ||

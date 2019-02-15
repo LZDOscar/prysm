@@ -4,7 +4,6 @@ package params
 
 import (
 	"math/big"
-	"time"
 )
 
 func makeEmptySignature() [][]byte {
@@ -19,9 +18,7 @@ type BeaconChainConfig struct {
 	// Misc constants.
 	ShardCount                 uint64 // ShardCount is the number of shard chains in Ethereum 2.0.
 	TargetCommitteeSize        uint64 // TargetCommitteeSize is the number of validators in a committee when the chain is healthy.
-	EjectionBalance            uint64 // EjectionBalance is the minimal GWei a validator needs to have before ejected.
 	MaxBalanceChurnQuotient    uint64 // MaxBalanceChurnQuotient is used to determine how many validators can rotate per epoch.
-	Gwei                       uint64 // Gwei is the denomination of Gwei in Ether.
 	BeaconChainShardNumber     uint64 // BeaconChainShardNumber is the shard number of the beacon chain.
 	MaxIndicesPerSlashableVote uint64 // MaxIndicesPerSlashableVote is used to determine how many validators can be slashed per vote.
 	LatestBlockRootsLength     uint64 // LatestBlockRootsLength is the number of block roots kept in the beacon state.
@@ -29,12 +26,19 @@ type BeaconChainConfig struct {
 	LatestPenalizedExitLength  uint64 // LatestPenalizedExitLength is used to track penalized exit balances per time interval.
 	LatestIndexRootsLength     uint64 // LatestIndexRootsLength is the number of index roots kept in beacon state, used by light client.
 	MaxWithdrawalsPerEpoch     uint64 // MaxWithdrawalsPerEpoch is the max withdrawals can happen for a single epoch.
+	ValidatorPrivkeyFileName   string // ValidatorPrivKeyFileName specifies the string name of a validator private key file.
+	WithdrawalPrivkeyFileName  string // WithdrawalPrivKeyFileName specifies the string name of a withdrawal private key file.
+	BLSPubkeyLength            int    // BLSPubkeyLength defines the expected length of BLS public keys in bytes.
 
 	// Deposit contract constants.
 	DepositContractAddress   []byte // DepositContractAddress is the address of the deposit contract in PoW chain.
 	DepositContractTreeDepth uint64 // Depth of the Merkle trie of deposits in the validator deposit contract on the PoW chain.
-	MinDeposit               uint64 // MinDeposit is the maximal amount of Gwei a validator can send to the deposit contract at once.
-	MaxDeposit               uint64 // MaxDeposit is the maximal amount of Gwei a validator can send to the deposit contract at once.
+
+	// Gwei Values
+	MinDepositAmount           uint64 // MinDepositAmount is the maximal amount of Gwei a validator can send to the deposit contract at once.
+	MaxDepositAmount           uint64 // MaxDepositAmount is the maximal amount of Gwei a validator can send to the deposit contract at once.
+	EjectionBalance            uint64 // EjectionBalance is the minimal GWei a validator needs to have before ejected.
+	ForkChoiceBalanceIncrement uint64 // ForkChoiceBalanceIncrement is used to track block score based on balances for fork choice.
 
 	// Initial value constants.
 	GenesisForkVersion      uint64   // GenesisForkVersion is used to track fork version between state transitions.
@@ -70,12 +74,10 @@ type BeaconChainConfig struct {
 	MaxAttesterSlashings uint64 // MaxAttesterSlashings defines the maximum number of casper FFG slashings possible in a block.
 
 	// Prysm constants.
-	DepositsForChainStart uint64    // DepositsForChainStart defines how many validator deposits needed to kick off beacon chain.
-	SimulatedBlockRandao  [32]byte  // SimulatedBlockRandao is a RANDAO seed stubbed in simulated block for advancing local beacon chain.
-	RandBytes             uint64    // RandBytes is the number of bytes used as entropy to shuffle validators.
-	SyncPollingInterval   int64     // SyncPollingInterval queries network nodes for sync status.
-	GenesisTime           time.Time // GenesisTime used by the protocol.
-	MaxNumLog2Validators  uint64    // MaxNumLog2Validators is the Max number of validators in Log2 exists given total ETH supply.
+	DepositsForChainStart uint64 // DepositsForChainStart defines how many validator deposits needed to kick off beacon chain.
+	RandBytes             uint64 // RandBytes is the number of bytes used as entropy to shuffle validators.
+	SyncPollingInterval   int64  // SyncPollingInterval queries network nodes for sync status.
+	MaxNumLog2Validators  uint64 // MaxNumLog2Validators is the Max number of validators in Log2 exists given total ETH supply.
 }
 
 // DepositContractConfig contains the deposits for
@@ -95,25 +97,31 @@ var defaultBeaconConfig = &BeaconChainConfig{
 	// Misc constant.
 	ShardCount:                 1024,
 	TargetCommitteeSize:        128,
-	EjectionBalance:            16 * 1e9,
 	MaxBalanceChurnQuotient:    32,
 	BeaconChainShardNumber:     1<<64 - 1,
-	MaxIndicesPerSlashableVote: 1,
+	MaxIndicesPerSlashableVote: 4096,
 	LatestBlockRootsLength:     8192,
 	LatestRandaoMixesLength:    8192,
 	LatestPenalizedExitLength:  8192,
 	LatestIndexRootsLength:     8192,
 	MaxWithdrawalsPerEpoch:     4,
+	ValidatorPrivkeyFileName:   "/validatorprivatekey",
+	WithdrawalPrivkeyFileName:  "/shardwithdrawalkey",
+	BLSPubkeyLength:            96,
 
 	// Deposit contract constants.
 	DepositContractTreeDepth: 32,
-	MinDeposit:               1 * 1e9,
-	MaxDeposit:               32 * 1e9,
+
+	// Gwei values:
+	MinDepositAmount:           1 * 1e9,
+	MaxDepositAmount:           32 * 1e9,
+	EjectionBalance:            16 * 1e9,
+	ForkChoiceBalanceIncrement: 1 * 1e9,
 
 	// Initial value constants.
 	GenesisForkVersion: 0,
-	GenesisSlot:        0,
-	GenesisEpoch:       0,
+	GenesisSlot:        1 << 63,
+	GenesisEpoch:       1 << 63 / 64,
 	GenesisStartShard:  0,
 	FarFutureEpoch:     1<<64 - 1,
 	ZeroHash:           [32]byte{},
@@ -145,67 +153,7 @@ var defaultBeaconConfig = &BeaconChainConfig{
 	DepositsForChainStart: 16384,
 	RandBytes:             3,
 	SyncPollingInterval:   6 * 4, // Query nodes over the network every 4 slots for sync status.
-	GenesisTime:           time.Date(2018, 9, 0, 0, 0, 0, 0, time.UTC),
 	MaxNumLog2Validators:  24,
-}
-
-var demoBeaconConfig = &BeaconChainConfig{
-	// Misc constant.
-	ShardCount:                 5,
-	TargetCommitteeSize:        3,
-	EjectionBalance:            defaultBeaconConfig.EjectionBalance,
-	MaxBalanceChurnQuotient:    defaultBeaconConfig.MaxBalanceChurnQuotient,
-	BeaconChainShardNumber:     defaultBeaconConfig.BeaconChainShardNumber,
-	MaxIndicesPerSlashableVote: defaultBeaconConfig.MaxIndicesPerSlashableVote,
-	LatestBlockRootsLength:     defaultBeaconConfig.LatestBlockRootsLength,
-	LatestRandaoMixesLength:    defaultBeaconConfig.LatestRandaoMixesLength,
-	LatestPenalizedExitLength:  defaultBeaconConfig.LatestPenalizedExitLength,
-	LatestIndexRootsLength:     defaultBeaconConfig.LatestIndexRootsLength,
-	MaxWithdrawalsPerEpoch:     defaultBeaconConfig.MaxWithdrawalsPerEpoch,
-
-	// Deposit contract constants.
-	DepositContractTreeDepth: defaultBeaconConfig.DepositContractTreeDepth,
-	MaxDeposit:               defaultBeaconConfig.MaxDeposit,
-	MinDeposit:               defaultBeaconConfig.MinDeposit,
-
-	// Initial value constants.
-	GenesisForkVersion: defaultBeaconConfig.GenesisForkVersion,
-	GenesisSlot:        defaultBeaconConfig.GenesisSlot,
-	GenesisEpoch:       defaultBeaconConfig.GenesisEpoch,
-	GenesisStartShard:  defaultBeaconConfig.GenesisStartShard,
-	FarFutureEpoch:     defaultBeaconConfig.FarFutureEpoch,
-	ZeroHash:           defaultBeaconConfig.ZeroHash,
-	EmptySignature:     defaultBeaconConfig.EmptySignature,
-
-	// Time parameter constants.
-	SlotDuration:                 2,
-	MinAttestationInclusionDelay: defaultBeaconConfig.MinAttestationInclusionDelay,
-	EpochLength:                  defaultBeaconConfig.EpochLength,
-	SeedLookahead:                defaultBeaconConfig.SeedLookahead,
-	EntryExitDelay:               defaultBeaconConfig.EntryExitDelay,
-	Eth1DataVotingPeriod:         defaultBeaconConfig.Eth1DataVotingPeriod,
-	Eth1FollowDistance:           defaultBeaconConfig.Eth1FollowDistance,
-
-	// Reward and penalty quotients constants.
-	BaseRewardQuotient:           defaultBeaconConfig.BaseRewardQuotient,
-	WhistlerBlowerRewardQuotient: defaultBeaconConfig.WhistlerBlowerRewardQuotient,
-	IncluderRewardQuotient:       defaultBeaconConfig.IncluderRewardQuotient,
-	InactivityPenaltyQuotient:    defaultBeaconConfig.InactivityPenaltyQuotient,
-
-	// Max operations per block constants.
-	MaxExits:             defaultBeaconConfig.MaxExits,
-	MaxDeposits:          defaultBeaconConfig.MaxDeposits,
-	MaxAttestations:      defaultBeaconConfig.MaxAttestations,
-	MaxProposerSlashings: defaultBeaconConfig.MaxProposerSlashings,
-	MaxAttesterSlashings: defaultBeaconConfig.MaxAttesterSlashings,
-
-	// Prysm constants.
-	DepositsForChainStart: defaultBeaconConfig.DepositsForChainStart,
-	RandBytes:             defaultBeaconConfig.RandBytes,
-	SyncPollingInterval:   2 * 4, // Query nodes over the network every 4 slots for sync status.
-	GenesisTime:           time.Now(),
-	MaxNumLog2Validators:  defaultBeaconConfig.MaxNumLog2Validators,
-	SimulatedBlockRandao:  [32]byte{'S', 'I', 'M', 'U', 'L', 'A', 'T', 'O', 'R'},
 }
 
 var defaultShardConfig = &ShardChainConfig{
@@ -226,6 +174,22 @@ var contractConfig = defaultDepositContractConfig
 // BeaconConfig retrieves beacon chain config.
 func BeaconConfig() *BeaconChainConfig {
 	return beaconConfig
+}
+
+// DemoBeaconConfig retrieves the demo beacon chain config.
+func DemoBeaconConfig() *BeaconChainConfig {
+	demoConfig := *defaultBeaconConfig
+	demoConfig.ShardCount = 1
+	demoConfig.TargetCommitteeSize = 2
+	demoConfig.DepositsForChainStart = 8
+	demoConfig.EpochLength = 4
+	demoConfig.GenesisEpoch = demoConfig.GenesisSlot / 4
+	demoConfig.SlotDuration = 10
+	demoConfig.MinDepositAmount = 100
+	demoConfig.MaxDepositAmount = 3200
+	demoConfig.SyncPollingInterval = 2 * 4 // Query nodes over the network every 4 slots for sync status.
+
+	return &demoConfig
 }
 
 // ShardConfig retrieves shard chain config.
@@ -249,7 +213,7 @@ func DemoContractConfig(depositsReq *big.Int, minDeposit *big.Int, maxDeposit *b
 
 // UseDemoBeaconConfig for beacon chain services.
 func UseDemoBeaconConfig() {
-	beaconConfig = demoBeaconConfig
+	beaconConfig = DemoBeaconConfig()
 }
 
 // OverrideBeaconConfig by replacing the config. The preferred pattern is to
