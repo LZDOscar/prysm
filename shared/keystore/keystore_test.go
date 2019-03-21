@@ -7,11 +7,12 @@ import (
 	"testing"
 
 	"github.com/pborman/uuid"
-	bls "github.com/prysmaticlabs/go-bls"
+	"github.com/prysmaticlabs/prysm/shared/bls"
+	"github.com/prysmaticlabs/prysm/shared/bytesutil"
 	"github.com/prysmaticlabs/prysm/shared/testutil"
 )
 
-func TestStoreandGetKey(t *testing.T) {
+func TestStoreAndGetKey(t *testing.T) {
 	tmpdir := testutil.TempDir()
 	filedir := tmpdir + "/keystore"
 	ks := &Store{
@@ -34,8 +35,8 @@ func TestStoreandGetKey(t *testing.T) {
 		t.Fatalf("unable to get key %v", err)
 	}
 
-	if !newkey.SecretKey.IsEqual(key.SecretKey) {
-		t.Fatalf("retrieved secret keys are not equal %v , %v", newkey.SecretKey.LittleEndian(), key.SecretKey.LittleEndian())
+	if !bytes.Equal(newkey.SecretKey.Marshal(), key.SecretKey.Marshal()) {
+		t.Fatalf("retrieved secret keys are not equal %v , %v", newkey.SecretKey.Marshal(), key.SecretKey.Marshal())
 	}
 
 	if err := os.RemoveAll(filedir); err != nil {
@@ -44,14 +45,18 @@ func TestStoreandGetKey(t *testing.T) {
 }
 func TestEncryptDecryptKey(t *testing.T) {
 	newID := uuid.NewRandom()
-	blsKey := &bls.SecretKey{}
-	blsKey.SetByCSPRNG()
+	b := []byte("hi")
+	b32 := bytesutil.ToBytes32(b)
 	password := "test"
 
+	pk, err := bls.SecretKeyFromBytes(b32[:])
+	if err != nil {
+		t.Fatal(err)
+	}
 	key := &Key{
 		ID:        newID,
-		SecretKey: blsKey,
-		PublicKey: blsKey.GetPublicKey(),
+		SecretKey: pk,
+		PublicKey: pk.PublicKey(),
 	}
 
 	keyjson, err := EncryptKey(key, password, LightScryptN, LightScryptP)
@@ -68,8 +73,9 @@ func TestEncryptDecryptKey(t *testing.T) {
 		t.Fatalf("decrypted key's uuid doesn't match %v", newkey.ID)
 	}
 
-	if !newkey.SecretKey.IsEqual(blsKey) {
-		t.Fatalf("decrypted key's value is not equal %v", newkey.SecretKey.LittleEndian())
+	expected := pk.Marshal()
+	if !bytes.Equal(newkey.SecretKey.Marshal(), expected) {
+		t.Fatalf("decrypted key's value is not equal %v", newkey.SecretKey.Marshal())
 	}
 
 }

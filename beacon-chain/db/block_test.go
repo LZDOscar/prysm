@@ -1,21 +1,22 @@
 package db
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/prysmaticlabs/prysm/shared/ssz"
-
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
+	"github.com/prysmaticlabs/prysm/shared/hashutil"
 	"github.com/prysmaticlabs/prysm/shared/params"
 )
 
-func TestNilDB(t *testing.T) {
+func TestNilDB_OK(t *testing.T) {
 	db := setupDB(t)
 	defer teardownDB(t, db)
 
 	block := &pb.BeaconBlock{}
-	h, _ := ssz.TreeHash(block)
+	h, _ := hashutil.HashBeaconBlock(block)
 
 	hasBlock := db.HasBlock(h)
 	if hasBlock {
@@ -31,12 +32,12 @@ func TestNilDB(t *testing.T) {
 	}
 }
 
-func TestSave(t *testing.T) {
+func TestSaveBlock_OK(t *testing.T) {
 	db := setupDB(t)
 	defer teardownDB(t, db)
 
 	block1 := &pb.BeaconBlock{}
-	h1, _ := ssz.TreeHash(block1)
+	h1, _ := hashutil.HashBeaconBlock(block1)
 
 	err := db.SaveBlock(block1)
 	if err != nil {
@@ -47,7 +48,7 @@ func TestSave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get block: %v", err)
 	}
-	h1Prime, _ := ssz.TreeHash(b1Prime)
+	h1Prime, _ := hashutil.HashBeaconBlock(b1Prime)
 
 	if b1Prime == nil || h1 != h1Prime {
 		t.Fatalf("get should return b1: %x", h1)
@@ -56,7 +57,7 @@ func TestSave(t *testing.T) {
 	block2 := &pb.BeaconBlock{
 		Slot: 0,
 	}
-	h2, _ := ssz.TreeHash(block2)
+	h2, _ := hashutil.HashBeaconBlock(block2)
 
 	err = db.SaveBlock(block2)
 	if err != nil {
@@ -67,36 +68,34 @@ func TestSave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get block: %v", err)
 	}
-	h2Prime, _ := ssz.TreeHash(b2Prime)
+	h2Prime, _ := hashutil.HashBeaconBlock(b2Prime)
 	if b2Prime == nil || h2 != h2Prime {
 		t.Fatalf("get should return b2: %x", h2)
 	}
 }
 
-func TestBlockBySlotEmptyChain(t *testing.T) {
+func TestBlockBySlotEmptyChain_OK(t *testing.T) {
 	db := setupDB(t)
 	defer teardownDB(t, db)
 
-	block, err := db.BlockBySlot(0)
-	if err != nil {
-		t.Errorf("failure when fetching block by slot: %v", err)
-	}
+	block, _ := db.BlockBySlot(0)
 	if block != nil {
 		t.Error("BlockBySlot should return nil for an empty chain")
 	}
 }
 
-func TestUpdateChainHeadNoBlock(t *testing.T) {
+func TestUpdateChainHead_NoBlock(t *testing.T) {
 	db := setupDB(t)
 	defer teardownDB(t, db)
+	ctx := context.Background()
 
 	genesisTime := uint64(time.Now().Unix())
-	deposits := setupInitialDeposits(t)
-	err := db.InitializeState(genesisTime, deposits)
+	deposits, _ := setupInitialDeposits(t, 10)
+	err := db.InitializeState(genesisTime, deposits, &pb.Eth1Data{})
 	if err != nil {
 		t.Fatalf("failed to initialize state: %v", err)
 	}
-	beaconState, err := db.State()
+	beaconState, err := db.State(ctx)
 	if err != nil {
 		t.Fatalf("failed to get beacon state: %v", err)
 	}
@@ -107,13 +106,14 @@ func TestUpdateChainHeadNoBlock(t *testing.T) {
 	}
 }
 
-func TestUpdateChainHead(t *testing.T) {
+func TestUpdateChainHead_OK(t *testing.T) {
 	db := setupDB(t)
 	defer teardownDB(t, db)
+	ctx := context.Background()
 
 	genesisTime := uint64(time.Now().Unix())
-	deposits := setupInitialDeposits(t)
-	err := db.InitializeState(genesisTime, deposits)
+	deposits, _ := setupInitialDeposits(t, 10)
+	err := db.InitializeState(genesisTime, deposits, &pb.Eth1Data{})
 	if err != nil {
 		t.Fatalf("failed to initialize state: %v", err)
 	}
@@ -122,12 +122,12 @@ func TestUpdateChainHead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get genesis block: %v", err)
 	}
-	bHash, err := ssz.TreeHash(block)
+	bHash, err := hashutil.HashBeaconBlock(block)
 	if err != nil {
 		t.Fatalf("failed to get hash of b: %v", err)
 	}
 
-	beaconState, err := db.State()
+	beaconState, err := db.State(ctx)
 	if err != nil {
 		t.Fatalf("failed to get beacon state: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestUpdateChainHead(t *testing.T) {
 		Slot:             1,
 		ParentRootHash32: bHash[:],
 	}
-	b2Hash, err := ssz.TreeHash(block2)
+	b2Hash, err := hashutil.HashBeaconBlock(block2)
 	if err != nil {
 		t.Fatalf("failed to hash b2: %v", err)
 	}
@@ -156,11 +156,11 @@ func TestUpdateChainHead(t *testing.T) {
 		t.Fatalf("failed to retrieve head: %v", err)
 	}
 
-	b2PrimeHash, err := ssz.TreeHash(b2Prime)
+	b2PrimeHash, err := hashutil.HashBeaconBlock(b2Prime)
 	if err != nil {
 		t.Fatalf("failed to hash b2Prime: %v", err)
 	}
-	b2SigmaHash, err := ssz.TreeHash(b2Sigma)
+	b2SigmaHash, err := hashutil.HashBeaconBlock(b2Sigma)
 	if err != nil {
 		t.Fatalf("failed to hash b2Sigma: %v", err)
 	}
@@ -173,22 +173,23 @@ func TestUpdateChainHead(t *testing.T) {
 	}
 }
 
-func TestChainProgress(t *testing.T) {
+func TestChainProgress_OK(t *testing.T) {
 	db := setupDB(t)
 	defer teardownDB(t, db)
+	ctx := context.Background()
 
 	genesisTime := uint64(time.Now().Unix())
-	deposits := setupInitialDeposits(t)
-	err := db.InitializeState(genesisTime, deposits)
+	deposits, _ := setupInitialDeposits(t, 10)
+	err := db.InitializeState(genesisTime, deposits, &pb.Eth1Data{})
 	if err != nil {
 		t.Fatalf("failed to initialize state: %v", err)
 	}
 
-	beaconState, err := db.State()
+	beaconState, err := db.State(ctx)
 	if err != nil {
 		t.Fatalf("Failed to get beacon state: %v", err)
 	}
-	cycleLength := params.BeaconConfig().EpochLength
+	cycleLength := params.BeaconConfig().SlotsPerEpoch
 
 	block1 := &pb.BeaconBlock{Slot: 1}
 	if err := db.SaveBlock(block1); err != nil {
@@ -233,5 +234,110 @@ func TestChainProgress(t *testing.T) {
 	}
 	if heighestBlock.Slot != block3.Slot {
 		t.Fatalf("expected height to equal %d, got %d", block3.Slot, heighestBlock.Slot)
+	}
+}
+
+func TestHasBlockBySlot_OK(t *testing.T) {
+	db := setupDB(t)
+	defer teardownDB(t, db)
+
+	blkSlot := uint64(10)
+	block1 := &pb.BeaconBlock{
+		Slot: blkSlot,
+	}
+
+	exists, _, err := db.HasBlockBySlot(blkSlot)
+	if err != nil {
+		t.Fatalf("failed to get block: %v", err)
+	}
+	if exists {
+		t.Error("Block exists despite being not being saved")
+	}
+
+	if err := db.SaveBlock(block1); err != nil {
+		t.Fatalf("save block failed: %v", err)
+	}
+
+	if err := db.UpdateChainHead(block1, &pb.BeaconState{}); err != nil {
+		t.Fatalf("Unable to save block and state in db %v", err)
+	}
+
+	exists, blk, err := db.HasBlockBySlot(blkSlot)
+	if err != nil {
+		t.Fatalf("failed to get block: %v", err)
+	}
+	if !exists {
+		t.Error("Block does not exist in db")
+	}
+
+	if blk.Slot != blkSlot {
+		t.Errorf("Saved block does not have the slot from which it was requested")
+	}
+
+}
+
+func TestJustifiedBlock_NoneExists(t *testing.T) {
+	db := setupDB(t)
+	defer teardownDB(t, db)
+	wanted := "no justified block saved"
+	_, err := db.JustifiedBlock()
+	if !strings.Contains(err.Error(), wanted) {
+		t.Errorf("Expected: %s, received: %s", wanted, err.Error())
+	}
+}
+
+func TestJustifiedBlock_CanSaveRetrieve(t *testing.T) {
+	db := setupDB(t)
+	defer teardownDB(t, db)
+
+	blkSlot := uint64(10)
+	block1 := &pb.BeaconBlock{
+		Slot: blkSlot,
+	}
+
+	if err := db.SaveJustifiedBlock(block1); err != nil {
+		t.Fatalf("could not save justified block: %v", err)
+	}
+
+	justifiedBlk, err := db.JustifiedBlock()
+	if err != nil {
+		t.Fatalf("could not get justified block: %v", err)
+	}
+	if justifiedBlk.Slot != blkSlot {
+		t.Errorf("Saved block does not have the slot from which it was requested, wanted: %d, got: %d",
+			blkSlot, justifiedBlk.Slot)
+	}
+}
+
+func TestFinalizedBlock_NoneExists(t *testing.T) {
+	db := setupDB(t)
+	defer teardownDB(t, db)
+	wanted := "no finalized block saved"
+	_, err := db.FinalizedBlock()
+	if !strings.Contains(err.Error(), wanted) {
+		t.Errorf("Expected: %s, received: %s", wanted, err.Error())
+	}
+}
+
+func TestFinalizedBlock_CanSaveRetrieve(t *testing.T) {
+	db := setupDB(t)
+	defer teardownDB(t, db)
+
+	blkSlot := uint64(22)
+	block1 := &pb.BeaconBlock{
+		Slot: blkSlot,
+	}
+
+	if err := db.SaveFinalizedBlock(block1); err != nil {
+		t.Fatalf("could not save finalized block: %v", err)
+	}
+
+	finalizedblk, err := db.FinalizedBlock()
+	if err != nil {
+		t.Fatalf("could not get finalized block: %v", err)
+	}
+	if finalizedblk.Slot != blkSlot {
+		t.Errorf("Saved block does not have the slot from which it was requested, wanted: %d, got: %d",
+			blkSlot, finalizedblk.Slot)
 	}
 }

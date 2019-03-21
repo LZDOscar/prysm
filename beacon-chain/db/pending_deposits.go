@@ -3,17 +3,17 @@ package db
 import (
 	"context"
 	"math/big"
+	"sort"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/sirupsen/logrus"
-
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
+	"github.com/sirupsen/logrus"
+	"go.opencensus.io/trace"
 )
 
 var (
-	depositsCount = promauto.NewGauge(prometheus.GaugeOpts{
+	pendingDepositsCount = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "beacondb_pending_deposits",
 		Help: "The number of pending deposits in the beaconDB in-memory database",
 	})
@@ -29,8 +29,8 @@ type depositContainer struct {
 // InsertPendingDeposit into the database. If deposit or block number are nil
 // then this method does nothing.
 func (db *BeaconDB) InsertPendingDeposit(ctx context.Context, d *pb.Deposit, blockNum *big.Int) {
-	span, ctx := opentracing.StartSpanFromContext(ctx, "BeaconDB.InsertPendingDeposit")
-	defer span.Finish()
+	ctx, span := trace.StartSpan(ctx, "BeaconDB.InsertPendingDeposit")
+	defer span.End()
 	if d == nil || blockNum == nil {
 		log.WithFields(logrus.Fields{
 			"block":   blockNum,
@@ -40,34 +40,37 @@ func (db *BeaconDB) InsertPendingDeposit(ctx context.Context, d *pb.Deposit, blo
 	}
 	db.depositsLock.Lock()
 	defer db.depositsLock.Unlock()
-	db.deposits = append(db.deposits, &depositContainer{deposit: d, block: blockNum})
-	depositsCount.Inc()
+	db.pendingDeposits = append(db.pendingDeposits, &depositContainer{deposit: d, block: blockNum})
+	pendingDepositsCount.Inc()
 }
 
 // PendingDeposits returns a list of deposits until the given block number
 // (inclusive). If no block is specified then this method returns all pending
 // deposits.
 func (db *BeaconDB) PendingDeposits(ctx context.Context, beforeBlk *big.Int) []*pb.Deposit {
-	span, ctx := opentracing.StartSpanFromContext(ctx, "BeaconDB.PendingDeposits")
-	defer span.Finish()
+	ctx, span := trace.StartSpan(ctx, "BeaconDB.PendingDeposits")
+	defer span.End()
 	db.depositsLock.RLock()
 	defer db.depositsLock.RUnlock()
 
 	var deposits []*pb.Deposit
-	for _, ctnr := range db.deposits {
+	for _, ctnr := range db.pendingDeposits {
 		if beforeBlk == nil || beforeBlk.Cmp(ctnr.block) > -1 {
 			deposits = append(deposits, ctnr.deposit)
 		}
 	}
-
+	// Sort the deposits by Merkle index.
+	sort.SliceStable(deposits, func(i, j int) bool {
+		return deposits[i].MerkleTreeIndex < deposits[j].MerkleTreeIndex
+	})
 	return deposits
 }
 
 // RemovePendingDeposit from the database. The deposit is indexed by the
 // MerkleTreeIndex. This method does nothing if deposit ptr is nil.
 func (db *BeaconDB) RemovePendingDeposit(ctx context.Context, d *pb.Deposit) {
-	span, ctx := opentracing.StartSpanFromContext(ctx, "BeaconDB.RemovePendingDeposit")
-	defer span.Finish()
+	ctx, span := trace.StartSpan(ctx, "BeaconDB.RemovePendingDeposit")
+	defer span.End()
 
 	if d == nil {
 		log.Debug("Ignoring nil deposit removal")
@@ -78,7 +81,7 @@ func (db *BeaconDB) RemovePendingDeposit(ctx context.Context, d *pb.Deposit) {
 	defer db.depositsLock.Unlock()
 
 	idx := -1
-	for i, ctnr := range db.deposits {
+	for i, ctnr := range db.pendingDeposits {
 		if ctnr.deposit.MerkleTreeIndex == d.MerkleTreeIndex {
 			idx = i
 			break
@@ -86,7 +89,7 @@ func (db *BeaconDB) RemovePendingDeposit(ctx context.Context, d *pb.Deposit) {
 	}
 
 	if idx >= 0 {
-		db.deposits = append(db.deposits[:idx], db.deposits[idx+1:]...)
-		depositsCount.Dec()
+		db.pendingDeposits = append(db.pendingDeposits[:idx], db.pendingDeposits[idx+1:]...)
+		pendingDepositsCount.Dec()
 	}
 }

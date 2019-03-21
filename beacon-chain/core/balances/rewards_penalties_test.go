@@ -1,6 +1,7 @@
 package balances
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
@@ -8,7 +9,7 @@ import (
 	"github.com/prysmaticlabs/prysm/shared/params"
 )
 
-func TestFFGSrcRewardsPenalties(t *testing.T) {
+func TestFFGSrcRewardsPenalties_AccurateBalances(t *testing.T) {
 	tests := []struct {
 		voted                          []uint64
 		balanceAfterSrcRewardPenalties []uint64
@@ -35,6 +36,7 @@ func TestFFGSrcRewardsPenalties(t *testing.T) {
 			ValidatorBalances: validatorBalances,
 		}
 		state = ExpectedFFGSource(
+			context.Background(),
 			state,
 			tt.voted,
 			uint64(len(tt.voted))*params.BeaconConfig().MaxDepositAmount,
@@ -47,7 +49,7 @@ func TestFFGSrcRewardsPenalties(t *testing.T) {
 	}
 }
 
-func TestFFGTargetRewardsPenalties(t *testing.T) {
+func TestFFGTargetRewardsPenalties_AccurateBalances(t *testing.T) {
 	tests := []struct {
 		voted                          []uint64
 		balanceAfterTgtRewardPenalties []uint64
@@ -74,6 +76,7 @@ func TestFFGTargetRewardsPenalties(t *testing.T) {
 			ValidatorBalances: validatorBalances,
 		}
 		state = ExpectedFFGTarget(
+			context.Background(),
 			state,
 			tt.voted,
 			uint64(len(tt.voted))*params.BeaconConfig().MaxDepositAmount,
@@ -86,7 +89,7 @@ func TestFFGTargetRewardsPenalties(t *testing.T) {
 	}
 }
 
-func TestChainHeadRewardsPenalties(t *testing.T) {
+func TestChainHeadRewardsPenalties_AccuratePenalties(t *testing.T) {
 	tests := []struct {
 		voted                           []uint64
 		balanceAfterHeadRewardPenalties []uint64
@@ -113,6 +116,7 @@ func TestChainHeadRewardsPenalties(t *testing.T) {
 			ValidatorBalances: validatorBalances,
 		}
 		state = ExpectedBeaconChainHead(
+			context.Background(),
 			state,
 			tt.voted,
 			uint64(len(tt.voted))*params.BeaconConfig().MaxDepositAmount,
@@ -125,7 +129,7 @@ func TestChainHeadRewardsPenalties(t *testing.T) {
 	}
 }
 
-func TestInclusionDistRewards_Ok(t *testing.T) {
+func TestInclusionDistRewards_AccurateRewards(t *testing.T) {
 	validators := make([]*pb.Validator, params.BeaconConfig().DepositsForChainStart)
 	for i := 0; i < len(validators); i++ {
 		validators[i] = &pb.Validator{
@@ -140,9 +144,9 @@ func TestInclusionDistRewards_Ok(t *testing.T) {
 	}
 
 	attestation := []*pb.PendingAttestation{
-		{Data: &pb.AttestationData{Slot: 0},
+		{Data: &pb.AttestationData{Slot: params.BeaconConfig().GenesisSlot},
 			AggregationBitfield: participationBitfield,
-			InclusionSlot:       5},
+			InclusionSlot:       params.BeaconConfig().GenesisSlot + 5},
 	}
 
 	tests := []struct {
@@ -157,11 +161,13 @@ func TestInclusionDistRewards_Ok(t *testing.T) {
 			validatorBalances[i] = params.BeaconConfig().MaxDepositAmount
 		}
 		state := &pb.BeaconState{
+			Slot:               params.BeaconConfig().GenesisSlot,
 			ValidatorRegistry:  validators,
 			ValidatorBalances:  validatorBalances,
 			LatestAttestations: attestation,
 		}
 		state, err := InclusionDistance(
+			context.Background(),
 			state,
 			tt.voted,
 			uint64(len(validatorBalances))*params.BeaconConfig().MaxDepositAmount)
@@ -180,8 +186,8 @@ func TestInclusionDistRewards_Ok(t *testing.T) {
 	}
 }
 
-func TestInclusionDistRewards_NotOk(t *testing.T) {
-	validators := make([]*pb.Validator, params.BeaconConfig().EpochLength*2)
+func TestInclusionDistRewards_OutOfBounds(t *testing.T) {
+	validators := make([]*pb.Validator, params.BeaconConfig().SlotsPerEpoch*2)
 	for i := 0; i < len(validators); i++ {
 		validators[i] = &pb.Validator{
 			ExitEpoch: params.BeaconConfig().FarFutureEpoch,
@@ -204,14 +210,14 @@ func TestInclusionDistRewards_NotOk(t *testing.T) {
 			ValidatorRegistry:  validators,
 			LatestAttestations: attestation,
 		}
-		_, err := InclusionDistance(state, tt.voted, 0)
+		_, err := InclusionDistance(context.Background(), state, tt.voted, 0)
 		if err == nil {
 			t.Fatal("InclusionDistRewards should have failed")
 		}
 	}
 }
 
-func TestInactivityFFGSrcPenalty(t *testing.T) {
+func TestInactivityFFGSrcPenalty_AccuratePenalties(t *testing.T) {
 	tests := []struct {
 		voted                     []uint64
 		balanceAfterFFGSrcPenalty []uint64
@@ -238,6 +244,7 @@ func TestInactivityFFGSrcPenalty(t *testing.T) {
 			ValidatorBalances: validatorBalances,
 		}
 		state = InactivityFFGSource(
+			context.Background(),
 			state,
 			tt.voted,
 			uint64(len(validatorBalances))*params.BeaconConfig().MaxDepositAmount,
@@ -250,7 +257,7 @@ func TestInactivityFFGSrcPenalty(t *testing.T) {
 	}
 }
 
-func TestInactivityFFGTargetPenalty(t *testing.T) {
+func TestInactivityFFGTargetPenalty_AccuratePenalties(t *testing.T) {
 	tests := []struct {
 		voted                        []uint64
 		balanceAfterFFGTargetPenalty []uint64
@@ -277,6 +284,7 @@ func TestInactivityFFGTargetPenalty(t *testing.T) {
 			ValidatorBalances: validatorBalances,
 		}
 		state = InactivityFFGTarget(
+			context.Background(),
 			state,
 			tt.voted,
 			uint64(len(validatorBalances))*params.BeaconConfig().MaxDepositAmount,
@@ -289,7 +297,7 @@ func TestInactivityFFGTargetPenalty(t *testing.T) {
 	}
 }
 
-func TestInactivityHeadPenalty(t *testing.T) {
+func TestInactivityHeadPenalty_AccuratePenalties(t *testing.T) {
 	tests := []struct {
 		voted                             []uint64
 		balanceAfterInactivityHeadPenalty []uint64
@@ -313,6 +321,7 @@ func TestInactivityHeadPenalty(t *testing.T) {
 			ValidatorBalances: validatorBalances,
 		}
 		state = InactivityChainHead(
+			context.Background(),
 			state,
 			tt.voted,
 			uint64(len(validatorBalances))*params.BeaconConfig().MaxDepositAmount)
@@ -324,7 +333,7 @@ func TestInactivityHeadPenalty(t *testing.T) {
 	}
 }
 
-func TestInactivityExitedPenality(t *testing.T) {
+func TestInactivityExitedPenality_AccuratePenalties(t *testing.T) {
 	tests := []struct {
 		balanceAfterExitedPenalty []uint64
 		epochsSinceFinality       uint64
@@ -347,6 +356,7 @@ func TestInactivityExitedPenality(t *testing.T) {
 			ValidatorBalances: validatorBalances,
 		}
 		state = InactivityExitedPenalties(
+			context.Background(),
 			state,
 			uint64(len(validatorBalances))*params.BeaconConfig().MaxDepositAmount,
 			tt.epochsSinceFinality,
@@ -359,7 +369,7 @@ func TestInactivityExitedPenality(t *testing.T) {
 	}
 }
 
-func TestInactivityInclusionPenalty_Ok(t *testing.T) {
+func TestInactivityInclusionPenalty_AccuratePenalties(t *testing.T) {
 	validators := make([]*pb.Validator, params.BeaconConfig().DepositsForChainStart)
 	for i := 0; i < len(validators); i++ {
 		validators[i] = &pb.Validator{
@@ -373,7 +383,7 @@ func TestInactivityInclusionPenalty_Ok(t *testing.T) {
 		participationBitfield = append(participationBitfield, byte(0xff))
 	}
 	attestation := []*pb.PendingAttestation{
-		{Data: &pb.AttestationData{Slot: 0},
+		{Data: &pb.AttestationData{Slot: params.BeaconConfig().GenesisSlot},
 			AggregationBitfield: participationBitfield,
 			InclusionSlot:       5},
 	}
@@ -385,16 +395,18 @@ func TestInactivityInclusionPenalty_Ok(t *testing.T) {
 		{[]uint64{237, 224}},
 	}
 	for _, tt := range tests {
-		validatorBalances := make([]uint64, params.BeaconConfig().EpochLength*4)
+		validatorBalances := make([]uint64, params.BeaconConfig().SlotsPerEpoch*4)
 		for i := 0; i < len(validatorBalances); i++ {
 			validatorBalances[i] = params.BeaconConfig().MaxDepositAmount
 		}
 		state := &pb.BeaconState{
+			Slot:               params.BeaconConfig().GenesisSlot,
 			ValidatorRegistry:  validators,
 			ValidatorBalances:  validatorBalances,
 			LatestAttestations: attestation,
 		}
 		state, err := InactivityInclusionDistance(
+			context.Background(),
 			state,
 			tt.voted,
 			uint64(len(validatorBalances))*params.BeaconConfig().MaxDepositAmount)
@@ -413,8 +425,8 @@ func TestInactivityInclusionPenalty_Ok(t *testing.T) {
 	}
 }
 
-func TestInactivityInclusionPenalty_NotOk(t *testing.T) {
-	validators := make([]*pb.Validator, params.BeaconConfig().EpochLength*2)
+func TestInactivityInclusionPenalty_OutOfBounds(t *testing.T) {
+	validators := make([]*pb.Validator, params.BeaconConfig().SlotsPerEpoch*2)
 	for i := 0; i < len(validators); i++ {
 		validators[i] = &pb.Validator{
 			ExitEpoch: params.BeaconConfig().FarFutureEpoch,
@@ -436,14 +448,14 @@ func TestInactivityInclusionPenalty_NotOk(t *testing.T) {
 			ValidatorRegistry:  validators,
 			LatestAttestations: attestation,
 		}
-		_, err := InactivityInclusionDistance(state, tt.voted, 0)
+		_, err := InactivityInclusionDistance(context.Background(), state, tt.voted, 0)
 		if err == nil {
 			t.Fatal("InclusionDistRewards should have failed")
 		}
 	}
 }
 
-func TestAttestationInclusionRewards(t *testing.T) {
+func TestAttestationInclusionRewards_AccurateRewards(t *testing.T) {
 	validators := make([]*pb.Validator, params.BeaconConfig().DepositsForChainStart)
 	for i := 0; i < len(validators); i++ {
 		validators[i] = &pb.Validator{
@@ -457,9 +469,9 @@ func TestAttestationInclusionRewards(t *testing.T) {
 		participationBitfield = append(participationBitfield, byte(0xff))
 	}
 	attestation := []*pb.PendingAttestation{
-		{Data: &pb.AttestationData{Slot: 0},
+		{Data: &pb.AttestationData{Slot: params.BeaconConfig().GenesisSlot},
 			AggregationBitfield: participationBitfield,
-			InclusionSlot:       0},
+			InclusionSlot:       params.BeaconConfig().GenesisSlot},
 	}
 
 	tests := []struct {
@@ -469,16 +481,18 @@ func TestAttestationInclusionRewards(t *testing.T) {
 		{[]uint64{237}},
 	}
 	for _, tt := range tests {
-		validatorBalances := make([]uint64, params.BeaconConfig().EpochLength*4)
+		validatorBalances := make([]uint64, params.BeaconConfig().SlotsPerEpoch*4)
 		for i := 0; i < len(validatorBalances); i++ {
 			validatorBalances[i] = params.BeaconConfig().MaxDepositAmount
 		}
 		state := &pb.BeaconState{
+			Slot:               params.BeaconConfig().GenesisSlot,
 			ValidatorRegistry:  validators,
 			ValidatorBalances:  validatorBalances,
 			LatestAttestations: attestation,
 		}
 		state, err := AttestationInclusion(
+			context.Background(),
 			state,
 			uint64(len(validatorBalances))*params.BeaconConfig().MaxDepositAmount,
 			tt.voted)
@@ -498,7 +512,7 @@ func TestAttestationInclusionRewards(t *testing.T) {
 }
 
 func TestAttestationInclusionRewards_NoInclusionSlot(t *testing.T) {
-	validators := make([]*pb.Validator, params.BeaconConfig().EpochLength*2)
+	validators := make([]*pb.Validator, params.BeaconConfig().SlotsPerEpoch*2)
 	for i := 0; i < len(validators); i++ {
 		validators[i] = &pb.Validator{
 			ExitEpoch: params.BeaconConfig().FarFutureEpoch,
@@ -520,14 +534,14 @@ func TestAttestationInclusionRewards_NoInclusionSlot(t *testing.T) {
 			ValidatorRegistry: validators,
 			ValidatorBalances: validatorBalances,
 		}
-		if _, err := AttestationInclusion(state, 0, tt.voted); err == nil {
+		if _, err := AttestationInclusion(context.Background(), state, 0, tt.voted); err == nil {
 			t.Fatal("AttestationInclusionRewards should have failed with no inclusion slot")
 		}
 	}
 }
 
 func TestAttestationInclusionRewards_NoProposerIndex(t *testing.T) {
-	validators := make([]*pb.Validator, params.BeaconConfig().EpochLength*2)
+	validators := make([]*pb.Validator, params.BeaconConfig().SlotsPerEpoch*2)
 	for i := 0; i < len(validators); i++ {
 		validators[i] = &pb.Validator{
 			ExitEpoch: params.BeaconConfig().FarFutureEpoch,
@@ -556,14 +570,14 @@ func TestAttestationInclusionRewards_NoProposerIndex(t *testing.T) {
 			ValidatorBalances:  validatorBalances,
 			LatestAttestations: attestation,
 		}
-		if _, err := AttestationInclusion(state, 0, tt.voted); err == nil {
+		if _, err := AttestationInclusion(context.Background(), state, 0, tt.voted); err == nil {
 			t.Fatal("AttestationInclusionRewards should have failed with no proposer index")
 		}
 	}
 }
 
-func TestCrosslinksRewardsPenalties(t *testing.T) {
-	validators := make([]*pb.Validator, params.BeaconConfig().EpochLength*4)
+func TestCrosslinksRewardsPenalties_AccurateBalances(t *testing.T) {
+	validators := make([]*pb.Validator, params.BeaconConfig().SlotsPerEpoch*4)
 	for i := 0; i < len(validators); i++ {
 		validators[i] = &pb.Validator{
 			ExitEpoch: params.BeaconConfig().FarFutureEpoch,
@@ -584,7 +598,7 @@ func TestCrosslinksRewardsPenalties(t *testing.T) {
 			32829149760, 32829149760, 32829149760, 32829149760}},
 	}
 	for _, tt := range tests {
-		validatorBalances := make([]uint64, params.BeaconConfig().EpochLength*4)
+		validatorBalances := make([]uint64, params.BeaconConfig().SlotsPerEpoch*4)
 		for i := 0; i < len(validatorBalances); i++ {
 			validatorBalances[i] = params.BeaconConfig().MaxDepositAmount
 		}
@@ -599,6 +613,7 @@ func TestCrosslinksRewardsPenalties(t *testing.T) {
 			LatestAttestations: attestation,
 		}
 		state, err := Crosslinks(
+			context.Background(),
 			state,
 			attestation,
 			nil)

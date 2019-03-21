@@ -95,6 +95,10 @@ func TestIsPowerOf2(t *testing.T) {
 			a: 1024,
 			b: true,
 		},
+		{
+			a: 0,
+			b: false,
+		},
 	}
 	for _, tt := range tests {
 		if tt.b != IsPowerOf2(tt.a) {
@@ -128,6 +132,35 @@ func TestPowerOf2(t *testing.T) {
 	for _, tt := range tests {
 		if tt.b != PowerOf2(tt.a) {
 			t.Fatalf("PowerOf2(%d) = %d, wanted: %d", tt.a, PowerOf2(tt.a), tt.b)
+		}
+	}
+}
+
+func TestClosestPowerOf2(t *testing.T) {
+	tests := []struct {
+		a uint64
+		b uint64
+	}{
+		{
+			a: 10,
+			b: 8,
+		},
+		{
+			a: 300,
+			b: 256,
+		},
+		{
+			a: 1200,
+			b: 1024,
+		},
+		{
+			a: 4500,
+			b: 4096,
+		},
+	}
+	for _, tt := range tests {
+		if tt.b != ClosestPowerOf2(tt.a) {
+			t.Fatalf("ClosestPowerOf2(%d) = %d, wanted: %d", tt.a, ClosestPowerOf2(tt.a), tt.b)
 		}
 	}
 }

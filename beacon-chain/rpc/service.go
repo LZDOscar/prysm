@@ -8,12 +8,18 @@ import (
 	"net"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/gogo/protobuf/proto"
+	middleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	recovery "github.com/grpc-ecosystem/go-grpc-middleware/recovery"
 	"github.com/prysmaticlabs/prysm/beacon-chain/db"
 	pbp2p "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/rpc/v1"
 	"github.com/prysmaticlabs/prysm/shared/event"
 	"github.com/prysmaticlabs/prysm/shared/params"
+	"github.com/prysmaticlabs/prysm/shared/trieutil"
 	"github.com/sirupsen/logrus"
+	"go.opencensus.io/plugin/ocgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/reflection"
@@ -26,24 +32,27 @@ func init() {
 }
 
 type chainService interface {
-	IncomingBlockFeed() *event.Feed
-	// These methods are not called on-demand by a validator
-	// but instead streamed to connected validators every
-	// time the canonical head changes in the chain service.
 	CanonicalBlockFeed() *event.Feed
-	CanonicalStateFeed() *event.Feed
 	StateInitializedFeed() *event.Feed
+	ReceiveBlock(ctx context.Context, block *pbp2p.BeaconBlock) (*pbp2p.BeaconState, error)
+	ApplyForkChoiceRule(ctx context.Context, block *pbp2p.BeaconBlock, computedState *pbp2p.BeaconState) error
 }
 
 type operationService interface {
-	IncomingExitFeed() *event.Feed
+	PendingAttestations() ([]*pbp2p.Attestation, error)
+	HandleAttestations(context.Context, proto.Message) error
 	IncomingAttFeed() *event.Feed
 }
 
 type powChainService interface {
 	HasChainStartLogOccurred() (bool, uint64, error)
 	ChainStartFeed() *event.Feed
-	LatestBlockNumber() *big.Int
+	LatestBlockHeight() *big.Int
+	BlockExists(ctx context.Context, hash common.Hash) (bool, *big.Int, error)
+	BlockHashByHeight(ctx context.Context, height *big.Int) (common.Hash, error)
+	DepositRoot() [32]byte
+	DepositTrie() *trieutil.MerkleTrie
+	ChainStartDeposits() [][]byte
 }
 
 // Service defining an RPC server for a beacon node.
@@ -92,7 +101,7 @@ func NewRPCService(ctx context.Context, cfg *Config) *Service {
 		port:                  cfg.Port,
 		withCert:              cfg.CertFlag,
 		withKey:               cfg.KeyFlag,
-		slotAlignmentDuration: time.Duration(params.BeaconConfig().SlotDuration) * time.Second,
+		slotAlignmentDuration: time.Duration(params.BeaconConfig().SecondsPerSlot) * time.Second,
 		canonicalBlockChan:    make(chan *pbp2p.BeaconBlock, cfg.SubscriptionBuf),
 		canonicalStateChan:    make(chan *pbp2p.BeaconState, cfg.SubscriptionBuf),
 		incomingAttestation:   make(chan *pbp2p.Attestation, cfg.SubscriptionBuf),
@@ -109,6 +118,15 @@ func (s *Service) Start() {
 	s.listener = lis
 	log.Infof("RPC server listening on port :%s", s.port)
 
+	opts := []grpc.ServerOption{
+		grpc.StatsHandler(&ocgrpc.ServerHandler{}),
+		grpc.StreamInterceptor(middleware.ChainStreamServer(
+			recovery.StreamServerInterceptor(),
+		)),
+		grpc.UnaryInterceptor(middleware.ChainUnaryServer(
+			recovery.UnaryServerInterceptor(),
+		)),
+	}
 	// TODO(#791): Utilize a certificate for secure connections
 	// between beacon nodes and validator clients.
 	if s.withCert != "" && s.withKey != "" {
@@ -117,11 +135,11 @@ func (s *Service) Start() {
 			log.Errorf("Could not load TLS keys: %s", err)
 			s.credentialError = err
 		}
-		s.grpcServer = grpc.NewServer(grpc.Creds(creds))
+		opts = append(opts, grpc.Creds(creds))
 	} else {
 		log.Warn("You are using an insecure gRPC connection! Provide a certificate and key to connect securely")
-		s.grpcServer = grpc.NewServer()
 	}
+	s.grpcServer = grpc.NewServer(opts...)
 
 	beaconServer := &BeaconServer{
 		beaconDB:            s.beaconDB,
@@ -137,6 +155,7 @@ func (s *Service) Start() {
 		beaconDB:           s.beaconDB,
 		chainService:       s.chainService,
 		powChainService:    s.powChainService,
+		operationService:   s.operationService,
 		canonicalStateChan: s.canonicalStateChan,
 	}
 	attesterServer := &AttesterServer{
@@ -144,7 +163,10 @@ func (s *Service) Start() {
 		operationService: s.operationService,
 	}
 	validatorServer := &ValidatorServer{
-		beaconDB: s.beaconDB,
+		ctx:                s.ctx,
+		beaconDB:           s.beaconDB,
+		chainService:       s.chainService,
+		canonicalStateChan: s.canonicalStateChan,
 	}
 	pb.RegisterBeaconServiceServer(s.grpcServer, beaconServer)
 	pb.RegisterProposerServiceServer(s.grpcServer, proposerServer)

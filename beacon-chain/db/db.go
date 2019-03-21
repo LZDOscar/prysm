@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/boltdb/bolt"
+	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
 	"github.com/sirupsen/logrus"
 )
 
@@ -19,15 +20,18 @@ var log = logrus.WithField("prefix", "beacondb")
 // For example, instead of defining get, put, remove
 // This defines methods such as getBlock, saveBlocksAndAttestations, etc.
 type BeaconDB struct {
+	stateLock    sync.RWMutex
+	currentState *pb.BeaconState
 	db           *bolt.DB
 	DatabasePath string
 
 	// Beacon chain deposits in memory.
-	deposits     []*depositContainer
-	depositsLock sync.RWMutex
+	pendingDeposits []*depositContainer
+	deposits        []*depositContainer
+	depositsLock    sync.RWMutex
 }
 
-// Close closes the underlying leveldb database.
+// Close closes the underlying boltdb database.
 func (db *BeaconDB) Close() error {
 	return db.db.Close()
 }
@@ -35,7 +39,9 @@ func (db *BeaconDB) Close() error {
 func (db *BeaconDB) update(fn func(*bolt.Tx) error) error {
 	return db.db.Update(fn)
 }
-
+func (db *BeaconDB) batch(fn func(*bolt.Tx) error) error {
+	return db.db.Batch(fn)
+}
 func (db *BeaconDB) view(fn func(*bolt.Tx) error) error {
 	return db.db.View(fn)
 }
@@ -67,12 +73,20 @@ func NewDB(dirPath string) (*BeaconDB, error) {
 	db := &BeaconDB{db: boltDB, DatabasePath: dirPath}
 
 	if err := db.update(func(tx *bolt.Tx) error {
-		return createBuckets(tx, blockBucket, attestationBucket, mainChainBucket,
-			chainInfoBucket, cleanupHistoryBucket, blockOperationsBucket)
+		return createBuckets(tx, blockBucket, attestationBucket, mainChainBucket, histStateBucket,
+			chainInfoBucket, cleanupHistoryBucket, blockOperationsBucket, validatorBucket)
 
 	}); err != nil {
 		return nil, err
 	}
 
 	return db, err
+}
+
+// ClearDB removes the previously stored directory at the data directory.
+func ClearDB(dirPath string) error {
+	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+		return nil
+	}
+	return os.RemoveAll(dirPath)
 }

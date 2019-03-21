@@ -2,11 +2,10 @@ package blocks
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"reflect"
 	"testing"
-	"time"
-
-	"github.com/prysmaticlabs/prysm/shared/ssz"
 
 	"github.com/gogo/protobuf/proto"
 	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
@@ -14,7 +13,7 @@ import (
 	"github.com/prysmaticlabs/prysm/shared/params"
 )
 
-func TestGenesisBlock(t *testing.T) {
+func TestGenesisBlock_InitializedCorrectly(t *testing.T) {
 	stateHash := []byte{0}
 	b1 := NewGenesisBlock(stateHash)
 
@@ -26,8 +25,8 @@ func TestGenesisBlock(t *testing.T) {
 		t.Errorf("genesis block should have 0 attestations")
 	}
 
-	if !bytes.Equal(b1.RandaoRevealHash32, params.BeaconConfig().ZeroHash[:]) {
-		t.Error("genesis block missing RandaoRevealHash32 field")
+	if !bytes.Equal(b1.RandaoReveal, params.BeaconConfig().ZeroHash[:]) {
+		t.Error("genesis block missing RandaoReveal field")
 	}
 
 	if !bytes.Equal(b1.StateRootHash32, stateHash) {
@@ -42,13 +41,13 @@ func TestGenesisBlock(t *testing.T) {
 	}
 }
 
-func TestBlockRootAtSlot_OK(t *testing.T) {
-	if params.BeaconConfig().EpochLength != 64 {
-		t.Errorf("epochLength should be 64 for these tests to pass")
+func TestBlockRootAtSlot_AccurateBlockRoot(t *testing.T) {
+	if params.BeaconConfig().SlotsPerEpoch != 64 {
+		t.Errorf("slotsPerEpoch should be 64 for these tests to pass")
 	}
 	var blockRoots [][]byte
 
-	for i := uint64(0); i < params.BeaconConfig().EpochLength*2; i++ {
+	for i := uint64(0); i < params.BeaconConfig().LatestBlockRootsLength; i++ {
 		blockRoots = append(blockRoots, []byte{byte(i)})
 	}
 	state := &pb.BeaconState{
@@ -77,7 +76,7 @@ func TestBlockRootAtSlot_OK(t *testing.T) {
 		}, {
 			slot:         2999,
 			stateSlot:    3000,
-			expectedRoot: []byte{55},
+			expectedRoot: []byte{183},
 		}, {
 			slot:         2873,
 			stateSlot:    3000,
@@ -85,10 +84,11 @@ func TestBlockRootAtSlot_OK(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		state.Slot = tt.stateSlot
-		result, err := BlockRoot(state, tt.slot)
+		state.Slot = tt.stateSlot + params.BeaconConfig().GenesisSlot
+		wantedSlot := tt.slot + params.BeaconConfig().GenesisSlot
+		result, err := BlockRoot(state, wantedSlot)
 		if err != nil {
-			t.Errorf("failed to get block root at slot %d: %v", tt.slot, err)
+			t.Errorf("failed to get block root at slot %d: %v", wantedSlot, err)
 		}
 		if !bytes.Equal(result, tt.expectedRoot) {
 			t.Errorf(
@@ -101,13 +101,13 @@ func TestBlockRootAtSlot_OK(t *testing.T) {
 }
 
 func TestBlockRootAtSlot_OutOfBounds(t *testing.T) {
-	if params.BeaconConfig().EpochLength != 64 {
-		t.Errorf("epochLength should be 64 for these tests to pass")
+	if params.BeaconConfig().SlotsPerEpoch != 64 {
+		t.Errorf("slotsPerEpoch should be 64 for these tests to pass")
 	}
 
 	var blockRoots [][]byte
 
-	for i := uint64(0); i < params.BeaconConfig().EpochLength*2; i++ {
+	for i := uint64(0); i < params.BeaconConfig().LatestBlockRootsLength; i++ {
 		blockRoots = append(blockRoots, []byte{byte(i)})
 	}
 	state := &pb.BeaconState{
@@ -120,13 +120,16 @@ func TestBlockRootAtSlot_OutOfBounds(t *testing.T) {
 		expectedErr string
 	}{
 		{
-			slot:        1000,
-			stateSlot:   500,
-			expectedErr: "slot 1000 is not within expected range of 372 to 499",
+			slot:      params.BeaconConfig().GenesisSlot + 1000,
+			stateSlot: params.BeaconConfig().GenesisSlot + 500,
+			expectedErr: fmt.Sprintf("slot %d is not within expected range of %d to %d",
+				1000,
+				0,
+				500),
 		},
 		{
-			slot:        129,
-			stateSlot:   400,
+			slot:        params.BeaconConfig().GenesisSlot + 129,
+			stateSlot:   params.BeaconConfig().GenesisSlot + 400,
 			expectedErr: "slot 129 is not within expected range of 272 to 399",
 		},
 	}
@@ -139,7 +142,7 @@ func TestBlockRootAtSlot_OutOfBounds(t *testing.T) {
 	}
 }
 
-func TestProcessBlockRoots(t *testing.T) {
+func TestProcessBlockRoots_AccurateMerkleTree(t *testing.T) {
 	state := &pb.BeaconState{}
 
 	state.LatestBlockRootHash32S = make([][]byte, params.BeaconConfig().LatestBlockRootsLength)
@@ -147,7 +150,7 @@ func TestProcessBlockRoots(t *testing.T) {
 
 	testRoot := [32]byte{'a'}
 
-	newState := ProcessBlockRoots(state, testRoot)
+	newState := ProcessBlockRoots(context.Background(), state, testRoot)
 	if !bytes.Equal(newState.LatestBlockRootHash32S[0], testRoot[:]) {
 		t.Fatalf("Latest Block root hash not saved."+
 			" Supposed to get %#x , but got %#x", testRoot, newState.LatestBlockRootHash32S[0])
@@ -155,7 +158,7 @@ func TestProcessBlockRoots(t *testing.T) {
 
 	newState.Slot = newState.Slot - 1
 
-	newState = ProcessBlockRoots(newState, testRoot)
+	newState = ProcessBlockRoots(context.Background(), newState, testRoot)
 	expectedHashes := make([][]byte, params.BeaconConfig().LatestBlockRootsLength)
 	expectedHashes[0] = testRoot[:]
 	expectedHashes[params.BeaconConfig().LatestBlockRootsLength-1] = testRoot[:]
@@ -165,140 +168,5 @@ func TestProcessBlockRoots(t *testing.T) {
 	if !bytes.Equal(newState.BatchedBlockRootHash32S[0], expectedRoot[:]) {
 		t.Errorf("saved merkle root is not equal to expected merkle root"+
 			"\n expected %#x but got %#x", expectedRoot, newState.BatchedBlockRootHash32S[0])
-	}
-}
-
-func TestDecodeDepositAmountAndTimeStamp(t *testing.T) {
-
-	tests := []struct {
-		depositData *pb.DepositInput
-		amount      uint64
-		timestamp   int64
-	}{
-		{
-			depositData: &pb.DepositInput{
-				Pubkey:                      []byte("testing"),
-				ProofOfPossession:           []byte("pop"),
-				WithdrawalCredentialsHash32: []byte("withdraw"),
-			},
-			amount:    8749343850,
-			timestamp: 458739850,
-		},
-		{
-			depositData: &pb.DepositInput{
-				Pubkey:                      []byte("testing"),
-				ProofOfPossession:           []byte("pop"),
-				WithdrawalCredentialsHash32: []byte("withdraw"),
-			},
-			amount:    657660,
-			timestamp: 67750,
-		},
-		{
-			depositData: &pb.DepositInput{
-				Pubkey:                      []byte("testing"),
-				ProofOfPossession:           []byte("pop"),
-				WithdrawalCredentialsHash32: []byte("withdraw"),
-			},
-			amount:    5445540,
-			timestamp: 34340,
-		}, {
-			depositData: &pb.DepositInput{
-				Pubkey:                      []byte("testing"),
-				ProofOfPossession:           []byte("pop"),
-				WithdrawalCredentialsHash32: []byte("withdraw"),
-			},
-			amount:    4545,
-			timestamp: 4343,
-		}, {
-			depositData: &pb.DepositInput{
-				Pubkey:                      []byte("testing"),
-				ProofOfPossession:           []byte("pop"),
-				WithdrawalCredentialsHash32: []byte("withdraw"),
-			},
-			amount:    76706966,
-			timestamp: 34394393,
-		},
-	}
-
-	for _, tt := range tests {
-		data, err := EncodeDepositData(tt.depositData, tt.amount, tt.timestamp)
-		if err != nil {
-			t.Fatalf("could not encode data %v", err)
-		}
-
-		decAmount, decTimestamp, err := DecodeDepositAmountAndTimeStamp(data)
-		if err != nil {
-			t.Fatalf("could not decode data %v", err)
-		}
-
-		if tt.amount != decAmount {
-			t.Errorf("decoded amount not equal to given amount, %d : %d", decAmount, tt.amount)
-		}
-
-		if tt.timestamp != decTimestamp {
-			t.Errorf("decoded timestamp not equal to given timestamp, %d : %d", decTimestamp, tt.timestamp)
-		}
-	}
-}
-
-func TestBlockChildren(t *testing.T) {
-	genesisBlock := NewGenesisBlock([]byte{})
-	genesisRoot, err := ssz.TreeHash(genesisBlock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	targets := []*pb.BeaconBlock{
-		{
-			Slot:             9,
-			ParentRootHash32: genesisRoot[:],
-		},
-		{
-			Slot:             5,
-			ParentRootHash32: []byte{},
-		},
-		{
-			Slot:             8,
-			ParentRootHash32: genesisRoot[:],
-		},
-	}
-	children, err := BlockChildren(genesisBlock, targets)
-	if err != nil {
-		t.Fatalf("Could not fetch block children: %v", err)
-	}
-	if len(children) != 2 {
-		t.Errorf("Expected %d children, received %d", 2, len(children))
-	}
-}
-
-func TestEncodeDecodeDepositInput_Ok(t *testing.T) {
-	input := &pb.DepositInput{
-		Pubkey:                      []byte("key"),
-		WithdrawalCredentialsHash32: []byte("withdraw"),
-		ProofOfPossession:           []byte("pop"),
-	}
-	depositTime := time.Now().Unix()
-	enc, err := EncodeDepositData(input, params.BeaconConfig().MaxDepositAmount, depositTime)
-	if err != nil {
-		t.Errorf("Could not encode deposit input: %v", err)
-	}
-	dec, err := DecodeDepositInput(enc)
-	if err != nil {
-		t.Errorf("Could not decode deposit input: %v", err)
-	}
-	if !proto.Equal(input, dec) {
-		t.Errorf("Original and decoded messages do not match, wanted %v, received %v", input, dec)
-	}
-	value, timestamp, err := DecodeDepositAmountAndTimeStamp(enc)
-	if err != nil {
-		t.Errorf("Could not decode amount and timestamp: %v", err)
-	}
-	if value != params.BeaconConfig().MaxDepositAmount || timestamp != depositTime {
-		t.Errorf(
-			"Expected value to match, received %d == %d, expected timestamp to match received %d == %d",
-			value,
-			params.BeaconConfig().MaxDepositAmount,
-			timestamp,
-			depositTime,
-		)
 	}
 }

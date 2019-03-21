@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/prysmaticlabs/prysm/beacon-chain/db"
+	"github.com/prysmaticlabs/prysm/beacon-chain/operations"
 	initialsync "github.com/prysmaticlabs/prysm/beacon-chain/sync/initial-sync"
 	"github.com/sirupsen/logrus"
 )
@@ -22,7 +23,8 @@ type Config struct {
 	ChainService     chainService
 	BeaconDB         *db.BeaconDB
 	P2P              p2pAPI
-	OperationService operationService
+	OperationService operations.OperationFeeds
+	PowChainService  powChainService
 }
 
 // NewSyncService creates a new instance of SyncService using the config
@@ -32,10 +34,13 @@ func NewSyncService(ctx context.Context, cfg *Config) *Service {
 	sqCfg := DefaultQuerierConfig()
 	sqCfg.BeaconDB = cfg.BeaconDB
 	sqCfg.P2P = cfg.P2P
+	sqCfg.PowChain = cfg.PowChainService
+	sqCfg.ChainService = cfg.ChainService
 
 	isCfg := initialsync.DefaultConfig()
 	isCfg.BeaconDB = cfg.BeaconDB
 	isCfg.P2P = cfg.P2P
+	isCfg.ChainService = cfg.ChainService
 
 	rsCfg := DefaultRegularSyncConfig()
 	rsCfg.ChainService = cfg.ChainService
@@ -58,6 +63,7 @@ func NewSyncService(ctx context.Context, cfg *Config) *Service {
 
 // Start kicks off the sync service
 func (ss *Service) Start() {
+	slog.Info("Starting service")
 	go ss.run()
 }
 
@@ -97,6 +103,12 @@ func (ss *Service) run() {
 		ss.RegularSync.Start()
 		return
 	}
+
+	// Sets the highest observed slot from querier.
+	ss.InitialSync.InitializeObservedSlot(ss.Querier.currentHeadSlot)
+
+	// Sets the state root of the highest observed slot.
+	ss.InitialSync.InitializeStateRoot(ss.Querier.currentFinalizedStateRoot)
 
 	ss.InitialSync.Start()
 }

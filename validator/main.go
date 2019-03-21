@@ -6,11 +6,11 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/prysmaticlabs/prysm/validator/accounts"
-
 	"github.com/prysmaticlabs/prysm/shared/cmd"
 	"github.com/prysmaticlabs/prysm/shared/debug"
+	"github.com/prysmaticlabs/prysm/shared/featureconfig"
 	"github.com/prysmaticlabs/prysm/shared/version"
+	"github.com/prysmaticlabs/prysm/validator/accounts"
 	"github.com/prysmaticlabs/prysm/validator/node"
 	"github.com/prysmaticlabs/prysm/validator/types"
 	"github.com/sirupsen/logrus"
@@ -56,33 +56,12 @@ func main() {
 	customFormatter.FullTimestamp = true
 	logrus.SetFormatter(customFormatter)
 	log := logrus.WithField("prefix", "main")
-
-	cli.AppHelpTemplate = `NAME:
-   {{.Name}} - {{.Usage}}
-USAGE:
-   {{.HelpName}} {{if .VisibleFlags}}[global options]{{end}}
-   {{if len .Authors}}
-AUTHOR:
-   {{range .Authors}}{{ . }}{{end}}
-   {{end}}{{if .Commands}}
-GLOBAL OPTIONS:
-   {{range .VisibleFlags}}{{.}}
-   {{end}}{{end}}{{if .Copyright }}
-COPYRIGHT:
-   {{.Copyright}}
-   {{end}}{{if .Version}}
-VERSION:
-   {{.Version}}
-   {{end}}
-`
-
 	app := cli.NewApp()
 	app.Name = "validator"
-	app.Usage = `launches an Ethereum Serenity validator client that interacts with a beacon chain, 
+	app.Usage = `launches an Ethereum Serenity validator client that interacts with a beacon chain,
 				 starts proposer services, shardp2p connections, and more`
 	app.Version = version.GetVersion()
 	app.Action = startNode
-
 	app.Commands = []cli.Command{
 		{
 			Name:     "accounts",
@@ -91,8 +70,8 @@ VERSION:
 			Subcommands: cli.Commands{
 				cli.Command{
 					Name: "create",
-					Description: `creates a new validator account keystore containing private keys for Ethereum Serenity - 
-this command outputs a deposit data string which can be used to deposit Ether into the ETH1.0 deposit 
+					Description: `creates a new validator account keystore containing private keys for Ethereum Serenity -
+this command outputs a deposit data string which can be used to deposit Ether into the ETH1.0 deposit
 contract in order to activate the validator client`,
 					Flags: []cli.Flag{
 						types.KeystorePathFlag,
@@ -103,8 +82,8 @@ contract in order to activate the validator client`,
 			},
 		},
 	}
-
 	app.Flags = []cli.Flag{
+		types.NoCustomConfigFlag,
 		types.BeaconRPCProviderFlag,
 		types.KeystorePathFlag,
 		types.PasswordFlag,
@@ -113,8 +92,6 @@ contract in order to activate the validator client`,
 		cmd.EnableTracingFlag,
 		cmd.TracingEndpointFlag,
 		cmd.TraceSampleFractionFlag,
-		cmd.KeystorePasswordFlag,
-		cmd.KeystoreDirectoryFlag,
 		cmd.BootstrapNode,
 		cmd.MonitoringPortFlag,
 		debug.PProfFlag,
@@ -124,6 +101,8 @@ contract in order to activate the validator client`,
 		debug.CPUProfileFlag,
 		debug.TraceFlag,
 	}
+
+	app.Flags = append(app.Flags, featureconfig.ValidatorFlags...)
 
 	app.Before = func(ctx *cli.Context) error {
 		runtime.GOMAXPROCS(runtime.NumCPU())

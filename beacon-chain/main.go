@@ -9,6 +9,7 @@ import (
 	"github.com/prysmaticlabs/prysm/beacon-chain/utils"
 	"github.com/prysmaticlabs/prysm/shared/cmd"
 	"github.com/prysmaticlabs/prysm/shared/debug"
+	"github.com/prysmaticlabs/prysm/shared/featureconfig"
 	"github.com/prysmaticlabs/prysm/shared/version"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
@@ -38,40 +39,19 @@ func main() {
 	logrus.SetFormatter(customFormatter)
 	log := logrus.WithField("prefix", "main")
 	app := cli.NewApp()
-	cli.AppHelpTemplate = `NAME:
-   {{.Name}} - {{.Usage}}
-USAGE:
-   {{.HelpName}} {{if .VisibleFlags}}[global options]{{end}}
-   {{if len .Authors}}
-AUTHOR:
-   {{range .Authors}}{{ . }}{{end}}
-   {{end}}{{if .Commands}}
-GLOBAL OPTIONS:
-   {{range .VisibleFlags}}{{.}}
-   {{end}}{{end}}{{if .Copyright }}
-COPYRIGHT:
-   {{.Copyright}}
-   {{end}}{{if .Version}}
-VERSION:
-   {{.Version}}
-   {{end}}
-`
 	app.Name = "beacon-chain"
 	app.Usage = "this is a beacon chain implementation for Ethereum 2.0"
 	app.Action = startNode
 	app.Version = version.GetVersion()
 
 	app.Flags = []cli.Flag{
-		utils.DemoConfigFlag,
+		utils.NoCustomConfigFlag,
 		utils.DepositContractFlag,
 		utils.Web3ProviderFlag,
 		utils.RPCPort,
 		utils.CertFlag,
 		utils.KeyFlag,
-		utils.GenesisJSON,
-		utils.EnablePOWChain,
 		utils.EnableDBCleanup,
-		utils.ChainStartDelay,
 		cmd.BootstrapNode,
 		cmd.RelayNode,
 		cmd.P2PPort,
@@ -82,8 +62,7 @@ VERSION:
 		cmd.TraceSampleFractionFlag,
 		cmd.MonitoringPortFlag,
 		cmd.DisableMonitoringFlag,
-		cmd.KeystorePasswordFlag,
-		cmd.KeystoreDirectoryFlag,
+		cmd.ClearDBFlag,
 		debug.PProfFlag,
 		debug.PProfAddrFlag,
 		debug.PProfPortFlag,
@@ -91,6 +70,8 @@ VERSION:
 		debug.CPUProfileFlag,
 		debug.TraceFlag,
 	}
+
+	app.Flags = append(app.Flags, featureconfig.BeaconChainFlags...)
 
 	app.Before = func(ctx *cli.Context) error {
 		runtime.GOMAXPROCS(runtime.NumCPU())

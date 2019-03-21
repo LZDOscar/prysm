@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	gethRPC "github.com/ethereum/go-ethereum/rpc"
+	"github.com/prysmaticlabs/prysm/beacon-chain/attestation"
 	"github.com/prysmaticlabs/prysm/beacon-chain/blockchain"
 	"github.com/prysmaticlabs/prysm/beacon-chain/db"
 	"github.com/prysmaticlabs/prysm/beacon-chain/operations"
@@ -23,16 +24,20 @@ import (
 	"github.com/prysmaticlabs/prysm/shared"
 	"github.com/prysmaticlabs/prysm/shared/cmd"
 	"github.com/prysmaticlabs/prysm/shared/debug"
+	"github.com/prysmaticlabs/prysm/shared/featureconfig"
 	"github.com/prysmaticlabs/prysm/shared/p2p"
 	"github.com/prysmaticlabs/prysm/shared/params"
 	"github.com/prysmaticlabs/prysm/shared/prometheus"
+	"github.com/prysmaticlabs/prysm/shared/tracing"
 	"github.com/prysmaticlabs/prysm/shared/version"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
 
 var log = logrus.WithField("prefix", "node")
-var beaconChainDBName = "beaconchaindata"
+
+const beaconChainDBName = "beaconchaindata"
+const testSkipPowFlag = "test-skip-pow"
 
 // BeaconNode defines a struct that handles the services running a random beacon chain
 // full PoS node. It handles the lifecycle of the entire system and registers
@@ -48,6 +53,14 @@ type BeaconNode struct {
 // NewBeaconNode creates a new node instance, sets up configuration options, and registers
 // every required service to the node.
 func NewBeaconNode(ctx *cli.Context) (*BeaconNode, error) {
+	if err := tracing.Setup(
+		"beacon-chain", // service name
+		ctx.GlobalString(cmd.TracingEndpointFlag.Name),
+		ctx.GlobalFloat64(cmd.TraceSampleFractionFlag.Name),
+		ctx.GlobalBool(cmd.EnableTracingFlag.Name),
+	); err != nil {
+		return nil, err
+	}
 	registry := shared.NewServiceRegistry()
 
 	beacon := &BeaconNode{
@@ -56,10 +69,13 @@ func NewBeaconNode(ctx *cli.Context) (*BeaconNode, error) {
 		stop:     make(chan struct{}),
 	}
 
-	// Use demo config values if demo config flag is set.
-	if ctx.GlobalBool(utils.DemoConfigFlag.Name) {
+	// Use custom config values if the --no-custom-config flag is set.
+	if !ctx.GlobalBool(utils.NoCustomConfigFlag.Name) {
+		log.Info("Using custom parameter configuration")
 		params.UseDemoBeaconConfig()
 	}
+
+	featureconfig.ConfigureBeaconFeatures(ctx)
 
 	if err := beacon.startDB(ctx); err != nil {
 		return nil, err
@@ -73,15 +89,19 @@ func NewBeaconNode(ctx *cli.Context) (*BeaconNode, error) {
 		return nil, err
 	}
 
-	if err := beacon.registerBlockchainService(ctx); err != nil {
-		return nil, err
-	}
-
 	if err := beacon.registerOperationService(); err != nil {
 		return nil, err
 	}
 
-	if err := beacon.registerSyncService(); err != nil {
+	if err := beacon.registerAttestationService(); err != nil {
+		return nil, err
+	}
+
+	if err := beacon.registerBlockchainService(ctx); err != nil {
+		return nil, err
+	}
+
+	if err := beacon.registerSyncService(ctx); err != nil {
 		return nil, err
 	}
 
@@ -147,13 +167,19 @@ func (b *BeaconNode) Close() {
 
 func (b *BeaconNode) startDB(ctx *cli.Context) error {
 	baseDir := ctx.GlobalString(cmd.DataDirFlag.Name)
+	dbPath := path.Join(baseDir, beaconChainDBName)
+	if b.ctx.GlobalBool(cmd.ClearDBFlag.Name) {
+		if err := db.ClearDB(dbPath); err != nil {
+			return err
+		}
+	}
 
-	db, err := db.NewDB(path.Join(baseDir, beaconChainDBName))
+	db, err := db.NewDB(dbPath)
 	if err != nil {
 		return err
 	}
 
-	log.Info("checking db")
+	log.Infof("Checking db at %s", dbPath)
 	b.db = db
 	return nil
 }
@@ -167,20 +193,31 @@ func (b *BeaconNode) registerP2P(ctx *cli.Context) error {
 	return b.services.RegisterService(beaconp2p)
 }
 
-func (b *BeaconNode) registerBlockchainService(ctx *cli.Context) error {
+func (b *BeaconNode) registerBlockchainService(_ *cli.Context) error {
 	var web3Service *powchain.Web3Service
-	enablePOWChain := ctx.GlobalBool(utils.EnablePOWChain.Name)
-	if enablePOWChain {
-		if err := b.services.FetchService(&web3Service); err != nil {
-			return err
-		}
+	if err := b.services.FetchService(&web3Service); err != nil {
+		return err
+	}
+	var opsService *operations.Service
+	if err := b.services.FetchService(&opsService); err != nil {
+		return err
+	}
+	var attsService *attestation.Service
+	if err := b.services.FetchService(&attsService); err != nil {
+		return err
+	}
+	var p2pService *p2p.Server
+	if err := b.services.FetchService(&p2pService); err != nil {
+		return err
 	}
 
-	blockchainService, err := blockchain.NewChainService(context.TODO(), &blockchain.Config{
-		BeaconDB:         b.db,
-		Web3Service:      web3Service,
-		BeaconBlockBuf:   10,
-		IncomingBlockBuf: 100, // Big buffer to accommodate other feed subscribers.
+	blockchainService, err := blockchain.NewChainService(context.Background(), &blockchain.Config{
+		BeaconDB:       b.db,
+		Web3Service:    web3Service,
+		OpsPoolService: opsService,
+		AttsService:    attsService,
+		BeaconBlockBuf: 10,
+		P2p:            p2pService,
 	})
 	if err != nil {
 		return fmt.Errorf("could not register blockchain service: %v", err)
@@ -189,43 +226,64 @@ func (b *BeaconNode) registerBlockchainService(ctx *cli.Context) error {
 }
 
 func (b *BeaconNode) registerOperationService() error {
-	operationService := operations.NewOperationService(context.TODO(), &operations.Config{
+	var p2pService *p2p.Server
+	if err := b.services.FetchService(&p2pService); err != nil {
+		return err
+	}
+
+	operationService := operations.NewOpsPoolService(context.Background(), &operations.Config{
 		BeaconDB: b.db,
+		P2P:      p2pService,
 	})
 
 	return b.services.RegisterService(operationService)
 }
 
-func (b *BeaconNode) registerPOWChainService(ctx *cli.Context) error {
-	if !ctx.GlobalBool(utils.EnablePOWChain.Name) {
-		return nil
+func (b *BeaconNode) registerPOWChainService(cliCtx *cli.Context) error {
+	if cliCtx.GlobalBool(testSkipPowFlag) {
+		return b.services.RegisterService(&powchain.Web3Service{})
 	}
 
-	rpcClient, err := gethRPC.Dial(b.ctx.GlobalString(utils.Web3ProviderFlag.Name))
+	depAddress := cliCtx.GlobalString(utils.DepositContractFlag.Name)
+
+	if depAddress == "" {
+		log.Fatal("No deposit contract specified. Add --deposit-contract with a valid deposit contract address to start.")
+	}
+
+	if !common.IsHexAddress(depAddress) {
+		log.Fatalf("Invalid deposit contract address given: %s", depAddress)
+	}
+
+	rpcClient, err := gethRPC.Dial(cliCtx.GlobalString(utils.Web3ProviderFlag.Name))
 	if err != nil {
 		log.Fatalf("Access to PoW chain is required for validator. Unable to connect to Geth node: %v", err)
 	}
 	powClient := ethclient.NewClient(rpcClient)
 
-	delay := ctx.GlobalUint64(utils.ChainStartDelay.Name)
-
-	web3Service, err := powchain.NewWeb3Service(context.TODO(), &powchain.Web3ServiceConfig{
-		Endpoint:        b.ctx.GlobalString(utils.Web3ProviderFlag.Name),
-		DepositContract: common.HexToAddress(b.ctx.GlobalString(utils.DepositContractFlag.Name)),
+	ctx := context.Background()
+	cfg := &powchain.Web3ServiceConfig{
+		Endpoint:        cliCtx.GlobalString(utils.Web3ProviderFlag.Name),
+		DepositContract: common.HexToAddress(depAddress),
 		Client:          powClient,
 		Reader:          powClient,
 		Logger:          powClient,
+		BlockFetcher:    powClient,
 		ContractBackend: powClient,
 		BeaconDB:        b.db,
-		ChainStartDelay: delay,
-	})
+	}
+	web3Service, err := powchain.NewWeb3Service(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("could not register proof-of-work chain web3Service: %v", err)
 	}
+
+	if err := b.db.VerifyContractAddress(ctx, cfg.DepositContract); err != nil {
+		return err
+	}
+
 	return b.services.RegisterService(web3Service)
 }
 
-func (b *BeaconNode) registerSyncService() error {
+func (b *BeaconNode) registerSyncService(_ *cli.Context) error {
 	var chainService *blockchain.ChainService
 	if err := b.services.FetchService(&chainService); err != nil {
 		return err
@@ -241,11 +299,17 @@ func (b *BeaconNode) registerSyncService() error {
 		return err
 	}
 
+	var web3Service *powchain.Web3Service
+	if err := b.services.FetchService(&web3Service); err != nil {
+		return err
+	}
+
 	cfg := &rbcsync.Config{
 		ChainService:     chainService,
 		P2P:              p2pService,
 		BeaconDB:         b.db,
 		OperationService: operationService,
+		PowChainService:  web3Service,
 	}
 
 	syncService := rbcsync.NewSyncService(context.Background(), cfg)
@@ -264,17 +328,14 @@ func (b *BeaconNode) registerRPCService(ctx *cli.Context) error {
 	}
 
 	var web3Service *powchain.Web3Service
-	var enablePOWChain = ctx.GlobalBool(utils.EnablePOWChain.Name)
-	if enablePOWChain {
-		if err := b.services.FetchService(&web3Service); err != nil {
-			return err
-		}
+	if err := b.services.FetchService(&web3Service); err != nil {
+		return err
 	}
 
 	port := ctx.GlobalString(utils.RPCPort.Name)
 	cert := ctx.GlobalString(utils.CertFlag.Name)
 	key := ctx.GlobalString(utils.KeyFlag.Name)
-	rpcService := rpc.NewRPCService(context.TODO(), &rpc.Config{
+	rpcService := rpc.NewRPCService(context.Background(), &rpc.Config{
 		Port:             port,
 		CertFlag:         cert,
 		KeyFlag:          key,
@@ -296,4 +357,13 @@ func (b *BeaconNode) registerPrometheusService(ctx *cli.Context) error {
 	hook := prometheus.NewLogrusCollector()
 	logrus.AddHook(hook)
 	return b.services.RegisterService(service)
+}
+
+func (b *BeaconNode) registerAttestationService() error {
+	attsService := attestation.NewAttestationService(context.Background(),
+		&attestation.Config{
+			BeaconDB: b.db,
+		})
+
+	return b.services.RegisterService(attsService)
 }

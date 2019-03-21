@@ -7,7 +7,10 @@ import (
 	"io/ioutil"
 	"testing"
 
+	"github.com/gogo/protobuf/proto"
+	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
 	"github.com/prysmaticlabs/prysm/shared/event"
+	"github.com/prysmaticlabs/prysm/shared/params"
 	"github.com/prysmaticlabs/prysm/shared/testutil"
 	"github.com/sirupsen/logrus"
 	logTest "github.com/sirupsen/logrus/hooks/test"
@@ -27,7 +30,9 @@ func (t *TestLogger) Errorf(format string, args ...interface{}) {
 	t.testMap["error"] = true
 }
 
-type mockOperationService struct{}
+type mockOperationService struct {
+	pendingAttestations []*pb.Attestation
+}
 
 func (ms *mockOperationService) IncomingAttFeed() *event.Feed {
 	return new(event.Feed)
@@ -37,6 +42,36 @@ func (ms *mockOperationService) IncomingExitFeed() *event.Feed {
 	return new(event.Feed)
 }
 
+func (ms *mockOperationService) HandleAttestations(_ context.Context, _ proto.Message) error {
+	return nil
+}
+
+func (ms *mockOperationService) PendingAttestations() ([]*pb.Attestation, error) {
+	if ms.pendingAttestations != nil {
+		return ms.pendingAttestations, nil
+	}
+	return []*pb.Attestation{
+		{
+			AggregationBitfield: []byte("A"),
+			Data: &pb.AttestationData{
+				Slot: params.BeaconConfig().GenesisSlot + params.BeaconConfig().SlotsPerEpoch,
+			},
+		},
+		{
+			AggregationBitfield: []byte("B"),
+			Data: &pb.AttestationData{
+				Slot: params.BeaconConfig().GenesisSlot + params.BeaconConfig().SlotsPerEpoch,
+			},
+		},
+		{
+			AggregationBitfield: []byte("C"),
+			Data: &pb.AttestationData{
+				Slot: params.BeaconConfig().GenesisSlot + params.BeaconConfig().SlotsPerEpoch,
+			},
+		},
+	}, nil
+}
+
 type mockChainService struct {
 	blockFeed            *event.Feed
 	stateFeed            *event.Feed
@@ -44,20 +79,20 @@ type mockChainService struct {
 	stateInitializedFeed *event.Feed
 }
 
-func (m *mockChainService) IncomingBlockFeed() *event.Feed {
-	return new(event.Feed)
+func (m *mockChainService) StateInitializedFeed() *event.Feed {
+	return m.stateInitializedFeed
+}
+
+func (m *mockChainService) ReceiveBlock(ctx context.Context, block *pb.BeaconBlock) (*pb.BeaconState, error) {
+	return &pb.BeaconState{}, nil
+}
+
+func (m *mockChainService) ApplyForkChoiceRule(ctx context.Context, block *pb.BeaconBlock, computedState *pb.BeaconState) error {
+	return nil
 }
 
 func (m *mockChainService) CanonicalBlockFeed() *event.Feed {
-	return m.blockFeed
-}
-
-func (m *mockChainService) CanonicalStateFeed() *event.Feed {
-	return m.stateFeed
-}
-
-func (m *mockChainService) StateInitializedFeed() *event.Feed {
-	return m.stateInitializedFeed
+	return new(event.Feed)
 }
 
 func newMockChainService() *mockChainService {
@@ -69,7 +104,7 @@ func newMockChainService() *mockChainService {
 	}
 }
 
-func TestLifecycle(t *testing.T) {
+func TestLifecycle_OK(t *testing.T) {
 	hook := logTest.NewGlobal()
 	rpcService := NewRPCService(context.Background(), &Config{
 		Port:     "7348",
@@ -87,7 +122,7 @@ func TestLifecycle(t *testing.T) {
 
 }
 
-func TestBadEndpoint(t *testing.T) {
+func TestRPC_BadEndpoint(t *testing.T) {
 	fl := logrus.WithField("prefix", "rpc")
 
 	log = &TestLogger{
@@ -115,7 +150,7 @@ func TestBadEndpoint(t *testing.T) {
 
 }
 
-func TestStatus(t *testing.T) {
+func TestStatus_CredentialError(t *testing.T) {
 	credentialErr := errors.New("credentialError")
 	s := &Service{credentialError: credentialErr}
 
@@ -124,7 +159,7 @@ func TestStatus(t *testing.T) {
 	}
 }
 
-func TestInsecureEndpoint(t *testing.T) {
+func TestRPC_InsecureEndpoint(t *testing.T) {
 	hook := logTest.NewGlobal()
 	rpcService := NewRPCService(context.Background(), &Config{
 		Port: "7777",
