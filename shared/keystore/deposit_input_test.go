@@ -5,12 +5,11 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/gogo/protobuf/proto"
-	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
+	"github.com/prysmaticlabs/go-ssz"
 	"github.com/prysmaticlabs/prysm/shared/bls"
+	"github.com/prysmaticlabs/prysm/shared/bytesutil"
 	"github.com/prysmaticlabs/prysm/shared/keystore"
 	"github.com/prysmaticlabs/prysm/shared/params"
-	"github.com/prysmaticlabs/prysm/shared/ssz"
 )
 
 func TestDepositInput_GeneratesPb(t *testing.T) {
@@ -23,28 +22,26 @@ func TestDepositInput_GeneratesPb(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := keystore.DepositInput(k1, k2)
+	result, err := keystore.DepositInput(k1, k2, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(result.Pubkey, k1.PublicKey.Marshal()) {
-		t.Errorf("Mismatched pubkeys in deposit input. Want = %x, got = %x", result.Pubkey, k1.PublicKey.Marshal())
+	if !bytes.Equal(result.PublicKey, k1.PublicKey.Marshal()) {
+		t.Errorf("Mismatched pubkeys in deposit input. Want = %x, got = %x", result.PublicKey, k1.PublicKey.Marshal())
 	}
 
-	sig, err := bls.SignatureFromBytes(result.ProofOfPossession)
+	sig, err := bls.SignatureFromBytes(result.Signature)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Verify that the proof of possession is a signed copy of the input data.
-	proofOfPossessionInputPb := proto.Clone(result).(*pb.DepositInput)
-	proofOfPossessionInputPb.ProofOfPossession = nil
-	buf := new(bytes.Buffer)
-	if err := ssz.Encode(buf, proofOfPossessionInputPb); err != nil {
+	sr, err := ssz.SigningRoot(result)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !sig.Verify(buf.Bytes(), k1.PublicKey, params.BeaconConfig().DomainDeposit) {
-		t.Error("Invalid proof of proofOfPossession signature")
+	dom := bytesutil.FromBytes4(params.BeaconConfig().DomainDeposit)
+	if !sig.Verify(sr[:], k1.PublicKey, dom) {
+		t.Error("Invalid proof of deposit input signature")
 	}
 }

@@ -9,8 +9,8 @@ import (
 	reflect "reflect"
 
 	gomock "github.com/golang/mock/gomock"
-	v1 "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
-	v10 "github.com/prysmaticlabs/prysm/proto/beacon/rpc/v1"
+	v1 "github.com/prysmaticlabs/prysm/proto/beacon/rpc/v1"
+	v1alpha1 "github.com/prysmaticlabs/prysm/proto/eth/v1alpha1"
 	grpc "google.golang.org/grpc"
 )
 
@@ -37,42 +37,42 @@ func (m *MockAttesterServiceClient) EXPECT() *MockAttesterServiceClientMockRecor
 	return m.recorder
 }
 
-// AttestHead mocks base method
-func (m *MockAttesterServiceClient) AttestHead(arg0 context.Context, arg1 *v1.Attestation, arg2 ...grpc.CallOption) (*v10.AttestResponse, error) {
+// RequestAttestation mocks base method
+func (m *MockAttesterServiceClient) RequestAttestation(arg0 context.Context, arg1 *v1.AttestationRequest, arg2 ...grpc.CallOption) (*v1alpha1.AttestationData, error) {
 	m.ctrl.T.Helper()
 	varargs := []interface{}{arg0, arg1}
 	for _, a := range arg2 {
 		varargs = append(varargs, a)
 	}
-	ret := m.ctrl.Call(m, "AttestHead", varargs...)
-	ret0, _ := ret[0].(*v10.AttestResponse)
+	ret := m.ctrl.Call(m, "RequestAttestation", varargs...)
+	ret0, _ := ret[0].(*v1alpha1.AttestationData)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// AttestHead indicates an expected call of AttestHead
-func (mr *MockAttesterServiceClientMockRecorder) AttestHead(arg0, arg1 interface{}, arg2 ...interface{}) *gomock.Call {
+// RequestAttestation indicates an expected call of RequestAttestation
+func (mr *MockAttesterServiceClientMockRecorder) RequestAttestation(arg0, arg1 interface{}, arg2 ...interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]interface{}{arg0, arg1}, arg2...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AttestHead", reflect.TypeOf((*MockAttesterServiceClient)(nil).AttestHead), varargs...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RequestAttestation", reflect.TypeOf((*MockAttesterServiceClient)(nil).RequestAttestation), varargs...)
 }
 
-// AttestationDataAtSlot mocks base method
-func (m *MockAttesterServiceClient) AttestationDataAtSlot(arg0 context.Context, arg1 *v10.AttestationDataRequest, arg2 ...grpc.CallOption) (*v10.AttestationDataResponse, error) {
+// SubmitAttestation mocks base method
+func (m *MockAttesterServiceClient) SubmitAttestation(arg0 context.Context, arg1 *v1alpha1.Attestation, arg2 ...grpc.CallOption) (*v1.AttestResponse, error) {
 	m.ctrl.T.Helper()
 	varargs := []interface{}{arg0, arg1}
 	for _, a := range arg2 {
 		varargs = append(varargs, a)
 	}
-	ret := m.ctrl.Call(m, "AttestationDataAtSlot", varargs...)
-	ret0, _ := ret[0].(*v10.AttestationDataResponse)
+	ret := m.ctrl.Call(m, "SubmitAttestation", varargs...)
+	ret0, _ := ret[0].(*v1.AttestResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// AttestationDataAtSlot indicates an expected call of AttestationDataAtSlot
-func (mr *MockAttesterServiceClientMockRecorder) AttestationDataAtSlot(arg0, arg1 interface{}, arg2 ...interface{}) *gomock.Call {
+// SubmitAttestation indicates an expected call of SubmitAttestation
+func (mr *MockAttesterServiceClientMockRecorder) SubmitAttestation(arg0, arg1 interface{}, arg2 ...interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]interface{}{arg0, arg1}, arg2...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AttestationDataAtSlot", reflect.TypeOf((*MockAttesterServiceClient)(nil).AttestationDataAtSlot), varargs...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubmitAttestation", reflect.TypeOf((*MockAttesterServiceClient)(nil).SubmitAttestation), varargs...)
 }

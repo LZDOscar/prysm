@@ -9,26 +9,33 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	gethTypes "github.com/ethereum/go-ethereum/core/types"
+	dbutil "github.com/prysmaticlabs/prysm/beacon-chain/db/testing"
+	contracts "github.com/prysmaticlabs/prysm/contracts/deposit-contract"
 )
 
+var endpoint = "ws://127.0.0.1"
+
 func TestLatestMainchainInfo_OK(t *testing.T) {
-	endpoint := "ws://127.0.0.1"
-	testAcc, err := setup()
+	testAcc, err := contracts.Setup()
 	if err != nil {
 		t.Fatalf("Unable to set up simulated backend %v", err)
 	}
-	web3Service, err := NewWeb3Service(context.Background(), &Web3ServiceConfig{
+	beaconDB := dbutil.SetupDB(t)
+	defer dbutil.TeardownDB(t, beaconDB)
+	web3Service, err := NewService(context.Background(), &Web3ServiceConfig{
 		Endpoint:        endpoint,
-		DepositContract: testAcc.contractAddr,
+		DepositContract: testAcc.ContractAddr,
+		BlockFetcher:    &goodFetcher{},
 		Reader:          &goodReader{},
 		Logger:          &goodLogger{},
-		BlockFetcher:    &goodFetcher{},
-		ContractBackend: testAcc.backend,
+		HTTPLogger:      &goodLogger{},
+		ContractBackend: testAcc.Backend,
+		BeaconDB:        beaconDB,
 	})
 	if err != nil {
 		t.Fatalf("unable to setup web3 ETH1.0 chain service: %v", err)
 	}
-	testAcc.backend.Commit()
+	testAcc.Backend.Commit()
 
 	exitRoutine := make(chan bool)
 
@@ -39,7 +46,7 @@ func TestLatestMainchainInfo_OK(t *testing.T) {
 
 	header := &gethTypes.Header{
 		Number: big.NewInt(42),
-		Time:   big.NewInt(308534400),
+		Time:   308534400,
 	}
 
 	web3Service.headerChan <- header
@@ -54,8 +61,8 @@ func TestLatestMainchainInfo_OK(t *testing.T) {
 		t.Errorf("block hash not set, expected %v, got %v", header.Hash().Hex(), web3Service.blockHash.Hex())
 	}
 
-	if web3Service.blockTime != time.Unix(header.Time.Int64(), 0) {
-		t.Errorf("block time not set, expected %v, got %v", time.Unix(header.Time.Int64(), 0), web3Service.blockTime)
+	if web3Service.blockTime != time.Unix(int64(header.Time), 0) {
+		t.Errorf("block time not set, expected %v, got %v", time.Unix(int64(header.Time), 0), web3Service.blockTime)
 	}
 
 	blockInfoExistsInCache, info, err := web3Service.blockCache.BlockInfoByHash(web3Service.blockHash)
@@ -75,8 +82,7 @@ func TestLatestMainchainInfo_OK(t *testing.T) {
 }
 
 func TestBlockHashByHeight_ReturnsHash(t *testing.T) {
-	endpoint := "ws://127.0.0.1"
-	web3Service, err := NewWeb3Service(context.Background(), &Web3ServiceConfig{
+	web3Service, err := NewService(context.Background(), &Web3ServiceConfig{
 		Endpoint:     endpoint,
 		BlockFetcher: &goodFetcher{},
 	})
@@ -87,7 +93,8 @@ func TestBlockHashByHeight_ReturnsHash(t *testing.T) {
 
 	block := gethTypes.NewBlock(
 		&gethTypes.Header{
-			Number: big.NewInt(0),
+			Number: big.NewInt(15),
+			Time:   150,
 		},
 		[]*gethTypes.Transaction{},
 		[]*gethTypes.Header{},
@@ -114,8 +121,7 @@ func TestBlockHashByHeight_ReturnsHash(t *testing.T) {
 }
 
 func TestBlockExists_ValidHash(t *testing.T) {
-	endpoint := "ws://127.0.0.1"
-	web3Service, err := NewWeb3Service(context.Background(), &Web3ServiceConfig{
+	web3Service, err := NewService(context.Background(), &Web3ServiceConfig{
 		Endpoint:     endpoint,
 		BlockFetcher: &goodFetcher{},
 	})
@@ -154,8 +160,7 @@ func TestBlockExists_ValidHash(t *testing.T) {
 }
 
 func TestBlockExists_InvalidHash(t *testing.T) {
-	endpoint := "ws://127.0.0.1"
-	web3Service, err := NewWeb3Service(context.Background(), &Web3ServiceConfig{
+	web3Service, err := NewService(context.Background(), &Web3ServiceConfig{
 		Endpoint:     endpoint,
 		BlockFetcher: &goodFetcher{},
 	})
@@ -170,8 +175,7 @@ func TestBlockExists_InvalidHash(t *testing.T) {
 }
 
 func TestBlockExists_UsesCachedBlockInfo(t *testing.T) {
-	endpoint := "ws://127.0.0.1"
-	web3Service, err := NewWeb3Service(context.Background(), &Web3ServiceConfig{
+	web3Service, err := NewService(context.Background(), &Web3ServiceConfig{
 		Endpoint:     endpoint,
 		BlockFetcher: nil, // nil blockFetcher would panic if cached value not used
 	})
@@ -202,5 +206,25 @@ func TestBlockExists_UsesCachedBlockInfo(t *testing.T) {
 	}
 	if height.Cmp(block.Number()) != 0 {
 		t.Fatalf("Block height did not equal expected height, expected: %v, got: %v", big.NewInt(42), height)
+	}
+}
+
+func TestBlockNumberByTimestamp(t *testing.T) {
+	web3Service, err := NewService(context.Background(), &Web3ServiceConfig{
+		Endpoint:     endpoint,
+		BlockFetcher: &goodFetcher{},
+		Client:       nil,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	bn, err := web3Service.BlockNumberByTimestamp(ctx, 150000 /* time */)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bn.Cmp(big.NewInt(0)) == 0 {
+		t.Error("Returned a block with zero number, expected to be non zero")
 	}
 }

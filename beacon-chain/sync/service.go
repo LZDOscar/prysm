@@ -2,113 +2,103 @@ package sync
 
 import (
 	"context"
+	"sync"
 
+	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/prysmaticlabs/prysm/beacon-chain/blockchain"
 	"github.com/prysmaticlabs/prysm/beacon-chain/db"
 	"github.com/prysmaticlabs/prysm/beacon-chain/operations"
-	initialsync "github.com/prysmaticlabs/prysm/beacon-chain/sync/initial-sync"
-	"github.com/sirupsen/logrus"
+	"github.com/prysmaticlabs/prysm/beacon-chain/p2p"
+	pb "github.com/prysmaticlabs/prysm/proto/beacon/p2p/v1"
+	"github.com/prysmaticlabs/prysm/shared"
 )
 
-var slog = logrus.WithField("prefix", "sync")
+var _ = shared.Service(&RegularSync{})
 
-// Service defines the main routines used in the sync service.
-type Service struct {
-	RegularSync *RegularSync
-	InitialSync *initialsync.InitialSync
-	Querier     *Querier
-}
-
-// Config defines the configured services required for sync to work.
+// Config to set up the regular sync service.
 type Config struct {
-	ChainService     chainService
-	BeaconDB         *db.BeaconDB
-	P2P              p2pAPI
-	OperationService operations.OperationFeeds
-	PowChainService  powChainService
+	P2P        p2p.P2P
+	DB         db.Database
+	Operations *operations.Service
+	Chain      blockchainService
 }
 
-// NewSyncService creates a new instance of SyncService using the config
-// given.
-func NewSyncService(ctx context.Context, cfg *Config) *Service {
-
-	sqCfg := DefaultQuerierConfig()
-	sqCfg.BeaconDB = cfg.BeaconDB
-	sqCfg.P2P = cfg.P2P
-	sqCfg.PowChain = cfg.PowChainService
-	sqCfg.ChainService = cfg.ChainService
-
-	isCfg := initialsync.DefaultConfig()
-	isCfg.BeaconDB = cfg.BeaconDB
-	isCfg.P2P = cfg.P2P
-	isCfg.ChainService = cfg.ChainService
-
-	rsCfg := DefaultRegularSyncConfig()
-	rsCfg.ChainService = cfg.ChainService
-	rsCfg.BeaconDB = cfg.BeaconDB
-	rsCfg.P2P = cfg.P2P
-
-	sq := NewQuerierService(ctx, sqCfg)
-	rs := NewRegularSyncService(ctx, rsCfg)
-
-	isCfg.SyncService = rs
-	is := initialsync.NewInitialSyncService(ctx, isCfg)
-
-	return &Service{
-		RegularSync: rs,
-		InitialSync: is,
-		Querier:     sq,
-	}
-
+// This defines the interface for interacting with block chain service
+type blockchainService interface {
+	blockchain.BlockReceiver
+	blockchain.HeadFetcher
+	blockchain.FinalizationFetcher
+	blockchain.AttestationReceiver
+	blockchain.ChainFeeds
 }
 
-// Start kicks off the sync service
-func (ss *Service) Start() {
-	slog.Info("Starting service")
-	go ss.run()
+// NewRegularSync service.
+func NewRegularSync(cfg *Config) *RegularSync {
+	r := &RegularSync{
+		ctx:          context.Background(),
+		db:           cfg.DB,
+		p2p:          cfg.P2P,
+		operations:   cfg.Operations,
+		chain:        cfg.Chain,
+		helloTracker: make(map[peer.ID]*pb.Hello),
+	}
+
+	r.registerRPCHandlers()
+	r.registerSubscribers()
+
+	return r
 }
 
-// Stop ends all the currently running routines
-// which are part of the sync service.
-func (ss *Service) Stop() error {
-	err := ss.Querier.Stop()
-	if err != nil {
-		return err
-	}
-
-	err = ss.InitialSync.Stop()
-	if err != nil {
-		return err
-	}
-	return ss.RegularSync.Stop()
+// RegularSync service is responsible for handling all run time p2p related operations as the
+// main entry point for network messages.
+type RegularSync struct {
+	ctx              context.Context
+	p2p              p2p.P2P
+	db               db.Database
+	operations       *operations.Service
+	chain            blockchainService
+	helloTracker     map[peer.ID]*pb.Hello
+	helloTrackerLock sync.RWMutex
+	chainStarted     bool
 }
 
-// Status checks the status of the node. It returns nil if it's synced
-// with the rest of the network and no errors occurred. Otherwise, it returns an error.
-func (ss *Service) Status() error {
-	synced, err := ss.Querier.IsSynced()
-	if !synced && err != nil {
-		return err
-	}
+// Start the regular sync service.
+func (r *RegularSync) Start() {
+	r.p2p.AddConnectionHandler(r.sendRPCHelloRequest)
+	r.p2p.AddDisconnectionHandler(r.removeDisconnectedPeerStatus)
+}
+
+// Stop the regular sync service.
+func (r *RegularSync) Stop() error {
 	return nil
 }
 
-func (ss *Service) run() {
-	ss.Querier.Start()
-	synced, err := ss.Querier.IsSynced()
-	if err != nil {
-		slog.Fatalf("Unable to retrieve result from sync querier %v", err)
-	}
+// Status of the currently running regular sync service.
+func (r *RegularSync) Status() error {
+	return nil
+}
 
-	if synced {
-		ss.RegularSync.Start()
-		return
-	}
+// Syncing returns true if the node is currently syncing with the network.
+func (r *RegularSync) Syncing() bool {
+	// TODO(3147): Use real value.
+	return false
+}
 
-	// Sets the highest observed slot from querier.
-	ss.InitialSync.InitializeObservedSlot(ss.Querier.currentHeadSlot)
+// Hellos returns the map of hello messages received so far.
+func (r *RegularSync) Hellos() map[peer.ID]*pb.Hello {
+	r.helloTrackerLock.RLock()
+	defer r.helloTrackerLock.RUnlock()
+	return r.helloTracker
+}
 
-	// Sets the state root of the highest observed slot.
-	ss.InitialSync.InitializeStateRoot(ss.Querier.currentFinalizedStateRoot)
+// Checker defines a struct which can verify whether a node is currently
+// synchronizing a chain with the rest of peers in the network.
+type Checker interface {
+	Syncing() bool
+	Status() error
+}
 
-	ss.InitialSync.Start()
+// HelloTracker interface for accessing the hello / handshake messages received so far.
+type HelloTracker interface {
+	Hellos() map[peer.ID]*pb.Hello
 }

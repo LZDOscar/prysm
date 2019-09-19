@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"runtime/debug"
+	"runtime/pprof"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -22,14 +24,26 @@ type Service struct {
 	failStatus  error
 }
 
+// Handler represents a path and handler func to serve on the same port as /metrics, /healthz, /goroutinez, etc.
+type Handler struct {
+	Path    string
+	Handler func(http.ResponseWriter, *http.Request)
+}
+
 // NewPrometheusService sets up a new instance for a given address host:port.
 // An empty host will match with any IP so an address like ":2121" is perfectly acceptable.
-func NewPrometheusService(addr string, svcRegistry *shared.ServiceRegistry) *Service {
+func NewPrometheusService(addr string, svcRegistry *shared.ServiceRegistry, additionalHandlers ...Handler) *Service {
 	s := &Service{svcRegistry: svcRegistry}
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/healthz", s.healthzHandler)
+	mux.HandleFunc("/goroutinez", s.goroutinezHandler)
+
+	// Register additional handlers.
+	for _, h := range additionalHandlers {
+		mux.HandleFunc(h.Path, h.Handler)
+	}
 
 	s.server = &http.Server{Addr: addr, Handler: mux}
 
@@ -69,6 +83,14 @@ func (s *Service) healthzHandler(w http.ResponseWriter, _ *http.Request) {
 	if _, err := w.Write(buf.Bytes()); err != nil {
 		log.Errorf("Could not write healthz body %v", err)
 	}
+}
+
+func (s *Service) goroutinezHandler(w http.ResponseWriter, _ *http.Request) {
+	stack := debug.Stack()
+	// #nosec G104
+	w.Write(stack)
+	// #nosec G104
+	pprof.Lookup("goroutine").WriteTo(w, 2)
 }
 
 // Start the prometheus service.

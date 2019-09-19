@@ -8,7 +8,7 @@ import (
 	"github.com/prysmaticlabs/prysm/shared/cmd"
 	"github.com/prysmaticlabs/prysm/shared/debug"
 	"github.com/prysmaticlabs/prysm/shared/featureconfig"
-	"github.com/prysmaticlabs/prysm/validator/types"
+	"github.com/prysmaticlabs/prysm/validator/flags"
 	"github.com/urfave/cli"
 )
 
@@ -47,10 +47,14 @@ var appHelpFlagGroups = []flagGroup{
 			cmd.VerbosityFlag,
 			cmd.DataDirFlag,
 			cmd.EnableTracingFlag,
+			cmd.TracingProcessNameFlag,
 			cmd.TracingEndpointFlag,
 			cmd.TraceSampleFractionFlag,
 			cmd.BootstrapNode,
 			cmd.MonitoringPortFlag,
+			cmd.LogFormat,
+			cmd.LogFileName,
+			cmd.EnableUPnPFlag,
 		},
 	},
 	{
@@ -65,17 +69,27 @@ var appHelpFlagGroups = []flagGroup{
 		},
 	},
 	{
-		Name: "types",
+		Name: "validator",
 		Flags: []cli.Flag{
-			types.NoCustomConfigFlag,
-			types.BeaconRPCProviderFlag,
-			types.KeystorePathFlag,
-			types.PasswordFlag,
+			flags.NoCustomConfigFlag,
+			flags.BeaconRPCProviderFlag,
+			flags.CertFlag,
+			flags.KeystorePathFlag,
+			flags.PasswordFlag,
+			flags.DisablePenaltyRewardLogFlag,
+			flags.UnencryptedKeysFlag,
 		},
 	},
 	{
 		Name:  "features",
 		Flags: featureconfig.ValidatorFlags,
+	},
+	{
+		Name: "interop",
+		Flags: []cli.Flag{
+			flags.InteropNumValidators,
+			flags.InteropStartIndex,
+		},
 	},
 }
 

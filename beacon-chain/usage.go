@@ -5,7 +5,7 @@ import (
 	"io"
 	"sort"
 
-	"github.com/prysmaticlabs/prysm/beacon-chain/utils"
+	"github.com/prysmaticlabs/prysm/beacon-chain/flags"
 	"github.com/prysmaticlabs/prysm/shared/cmd"
 	"github.com/prysmaticlabs/prysm/shared/debug"
 	"github.com/prysmaticlabs/prysm/shared/featureconfig"
@@ -44,16 +44,21 @@ var appHelpFlagGroups = []flagGroup{
 	{
 		Name: "cmd",
 		Flags: []cli.Flag{
+			cmd.NoDiscovery,
 			cmd.BootstrapNode,
 			cmd.RelayNode,
-			cmd.P2PPort,
+			cmd.P2PUDPPort,
+			cmd.P2PTCPPort,
 			cmd.DataDirFlag,
 			cmd.VerbosityFlag,
 			cmd.EnableTracingFlag,
+			cmd.TracingProcessNameFlag,
 			cmd.TracingEndpointFlag,
 			cmd.TraceSampleFractionFlag,
 			cmd.MonitoringPortFlag,
 			cmd.DisableMonitoringFlag,
+			cmd.MaxGoroutines,
+			cmd.ClearDB,
 		},
 	},
 	{
@@ -68,20 +73,59 @@ var appHelpFlagGroups = []flagGroup{
 		},
 	},
 	{
-		Name: "utils",
+		Name: "beacon-chain",
 		Flags: []cli.Flag{
-			utils.NoCustomConfigFlag,
-			utils.DepositContractFlag,
-			utils.Web3ProviderFlag,
-			utils.RPCPort,
-			utils.CertFlag,
-			utils.KeyFlag,
-			utils.EnableDBCleanup,
+			flags.NoCustomConfigFlag,
+			flags.InteropMockEth1DataVotesFlag,
+			flags.InteropGenesisStateFlag,
+			flags.DepositContractFlag,
+			flags.Web3ProviderFlag,
+			flags.RPCPort,
+			flags.CertFlag,
+			flags.KeyFlag,
+			flags.GRPCGatewayPort,
+			flags.HTTPWeb3ProviderFlag,
+		},
+	},
+	{
+		Name: "p2p",
+		Flags: []cli.Flag{
+			cmd.P2PHost,
+			cmd.P2PMaxPeers,
+			cmd.P2PPrivKey,
+			cmd.P2PWhitelist,
+			cmd.StaticPeers,
+			cmd.EnableUPnPFlag,
+			cmd.P2PEncoding,
+		},
+	},
+	{
+		Name: "log",
+		Flags: []cli.Flag{
+			cmd.LogFormat,
+			cmd.LogFileName,
 		},
 	},
 	{
 		Name:  "features",
 		Flags: featureconfig.BeaconChainFlags,
+	},
+	{
+		Name: "interop",
+		Flags: []cli.Flag{
+			flags.InteropGenesisStateFlag,
+			flags.InteropGenesisTimeFlag,
+			flags.InteropNumValidatorsFlag,
+		},
+	},
+	{
+		Name: "archive",
+		Flags: []cli.Flag{
+			flags.ArchiveEnableFlag,
+			flags.ArchiveValidatorSetChangesFlag,
+			flags.ArchiveBlocksFlag,
+			flags.ArchiveAttestationsFlag,
+		},
 	},
 }
 

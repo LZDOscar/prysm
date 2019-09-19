@@ -8,22 +8,21 @@ go_library(
     deps = [
         "//beacon-chain/core/helpers:go_default_library",
         "//proto/beacon/p2p/v1:go_default_library",
-        "//shared/bytesutil:go_default_library",
+        "//shared/mathutil:go_default_library",
         "//shared/params:go_default_library",
-        "//shared/sliceutil:go_default_library",
-        "@io_opencensus_go//trace:go_default_library",
+        "@com_github_pkg_errors//:go_default_library",
     ],
 )
 
 go_test(
     name = "go_default_test",
+    size = "small",
     srcs = ["validator_test.go"],
     embed = [":go_default_library"],
     deps = [
         "//beacon-chain/core/helpers:go_default_library",
-        "//beacon-chain/core/state/stateutils:go_default_library",
         "//proto/beacon/p2p/v1:go_default_library",
-        "//shared/bitutil:go_default_library",
+        "//proto/eth/v1alpha1:go_default_library",
         "//shared/params:go_default_library",
     ],
 )

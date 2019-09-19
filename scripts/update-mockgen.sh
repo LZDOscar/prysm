@@ -3,10 +3,11 @@
 # Script to update mock files after proto/beacon/rpc/v1/services.proto changes.
 # Use a space to separate mock destination from its interfaces.
 
-mocks=("./validator/internal/attester_service_mock.go AttesterServiceClient"
-       "./validator/internal/beacon_service_mock.go BeaconServiceClient,BeaconService_LatestAttestationClient,BeaconService_WaitForChainStartClient"
+mocks=(
+      "./beacon-chain/internal/validator_service_mock.go ValidatorServiceServer,ValidatorService_WaitForActivationServer,ValidatorService_WaitForChainStartServer"
+      "./validator/internal/attester_service_mock.go AttesterServiceClient"
        "./validator/internal/proposer_service_mock.go ProposerServiceClient"
-       "./validator/internal/validator_service_mock.go ValidatorServiceClient")
+       "./validator/internal/validator_service_mock.go ValidatorServiceClient,ValidatorService_WaitForActivationClient,ValidatorService_WaitForChainStartClient")
 
 for ((i = 0; i < ${#mocks[@]}; i++)); do
     file=${mocks[i]% *};

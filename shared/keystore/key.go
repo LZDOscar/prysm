@@ -21,13 +21,13 @@ package keystore
 import (
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 
 	"github.com/pborman/uuid"
+	"github.com/pkg/errors"
 	"github.com/prysmaticlabs/prysm/shared/bls"
 )
 
@@ -139,7 +139,8 @@ func (k *Key) UnmarshalJSON(j []byte) (err error) {
 	return nil
 }
 
-func newKeyFromBLS(blsKey *bls.SecretKey) (*Key, error) {
+// NewKeyFromBLS creates a new keystore Key type using a BLS private key.
+func NewKeyFromBLS(blsKey *bls.SecretKey) (*Key, error) {
 	id := uuid.NewRandom()
 	pubkey := blsKey.PublicKey()
 	key := &Key{
@@ -154,9 +155,9 @@ func newKeyFromBLS(blsKey *bls.SecretKey) (*Key, error) {
 func NewKey(rand io.Reader) (*Key, error) {
 	secretKey, err := bls.RandKey(rand)
 	if err != nil {
-		return nil, fmt.Errorf("could not generate random key: %v", err)
+		return nil, errors.Wrap(err, "could not generate random key")
 	}
-	return newKeyFromBLS(secretKey)
+	return NewKeyFromBLS(secretKey)
 }
 
 func storeNewRandomKey(ks keyStore, rand io.Reader, password string) error {
